@@ -245,6 +245,40 @@ func (s *Storage) DeleteJargon(ctx context.Context, groupID, jargon string) erro
 	return err
 }
 
+// ListConfirmedJargon 列出指定群内已确认（status='confirmed'）的黑话。
+// learn_jargon 写入的黑话默认 pending，经 ConfirmJargon 转为 confirmed 后才会被列到。
+func (s *Storage) ListConfirmedJargon(ctx context.Context, groupID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, sqlListConfirmedJargon, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var j string
+		if err := rows.Scan(&j); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// ConfirmJargon 把一条黑话置为 confirmed（待确认 → 已确认）。黑话不存在时返回 domain.ErrNotFound。
+func (s *Storage) ConfirmJargon(ctx context.Context, groupID, jargon string) error {
+	res, err := s.db.ExecContext(ctx, sqlConfirmJargon, groupID, jargon)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 // ──────────────────────────── member_profile ────────────────────────────
 
 // UpsertMemberProfile 插入或更新群聊个人画像（(group_id, user_id) 冲突时覆盖）。

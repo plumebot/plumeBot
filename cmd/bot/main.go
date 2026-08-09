@@ -7,6 +7,7 @@ import (
 
 	"plumebot/internal/handler"
 	"plumebot/internal/infra/ai"
+	"plumebot/internal/infra/ai/tools"
 	"plumebot/internal/infra/onebot"
 	"plumebot/internal/infra/plugin_exe"
 	"plumebot/internal/infra/plugin_so"
@@ -35,12 +36,32 @@ func main() {
 	// 2. 创建 infra 实现
 	ctx := context.Background()
 	// LLM 注册中心：本期仅注册 openai（OpenAI 兼容接口）provider；
-	// 工具注册表为空（仅机制，P3-004/P4-001 起注册具体工具）。
+	// 工具注册表：P3-004 起注册记忆更新工具（store_fact/learn_jargon/forget_fact），
+	// 经 cfg.Tools.Enabled 决定是否注入 Agent。
 	toolsRegistry := ai.NewToolsRegistry()
 	llmRegistry := ai.NewRegistry()
 	if err := llmRegistry.Register(config.DefaultLLMProvider, ai.NewOpenAIFactory(toolsRegistry)); err != nil {
 		logger.Fatal("注册 LLM provider 失败", logger.Err(err))
 	}
+	storageInfra, err := sqlite.Open("data")
+	if err != nil {
+		logger.Fatal("打开 SQLite 失败", logger.Err(err))
+	}
+	defer storageInfra.Close()
+
+	// P3-004 记忆更新工具：Agent 对话中经 tool calling 写 SQLite（事实/黑话）。
+	// 会话身份（群/用户）由 P6-002 消息管线经 ctx 注入，工具经 domain.SessionFrom 读取。
+	memTools := tools.NewMemoryTools(storageInfra)
+	if err := toolsRegistry.Register("store_fact", memTools.StoreFact()); err != nil {
+		logger.Fatal("注册 store_fact 失败", logger.Err(err))
+	}
+	if err := toolsRegistry.Register("learn_jargon", memTools.LearnJargon()); err != nil {
+		logger.Fatal("注册 learn_jargon 失败", logger.Err(err))
+	}
+	if err := toolsRegistry.Register("forget_fact", memTools.ForgetFact()); err != nil {
+		logger.Fatal("注册 forget_fact 失败", logger.Err(err))
+	}
+
 	agentInfra, err := llmRegistry.NewAgent(ctx, *cfg)
 	if err != nil {
 		logger.Fatal("初始化 LLM Agent 失败", logger.Err(err))
@@ -50,11 +71,6 @@ func main() {
 	if err != nil {
 		logger.Fatal("初始化摘要器失败", logger.Err(err))
 	}
-	storageInfra, err := sqlite.Open("data")
-	if err != nil {
-		logger.Fatal("打开 SQLite 失败", logger.Err(err))
-	}
-	defer storageInfra.Close()
 	soPlugin := &plugin_so.PluginSOStub{}
 	exePlugin := &plugin_exe.PluginEXEStub{}
 

@@ -34,7 +34,7 @@ llm:
     max_tokens: 0              # 最大输出 token 数；≤0 → 不传
 
 tools:
-  enabled: []                  # 启用的工具名列表；空 = 不注册任何工具
+  enabled: [store_fact, learn_jargon, forget_fact]   # 启用的工具名列表（P3-004 记忆更新工具）；空 = 不注册任何工具
 
 agent:
   name: PlumeBot              # agent 标识（adk 元数据，multi-agent 路由用）；空 → PlumeBot

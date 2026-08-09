@@ -26,6 +26,11 @@ type Storage interface {
 	AddJargon(ctx context.Context, groupID string, jargon string) error
 	ListJargon(ctx context.Context, groupID string) ([]string, error)
 	DeleteJargon(ctx context.Context, groupID string, jargon string) error
+	// ListConfirmedJargon 列出指定群内已确认（status='confirmed'）的黑话。
+	// P6 prompt 组装只暴露 confirmed 黑话（pending 待人工审核）。
+	ListConfirmedJargon(ctx context.Context, groupID string) ([]string, error)
+	// ConfirmJargon 把一条黑话置为 confirmed；黑话不存在时返回 domain.ErrNotFound。
+	ConfirmJargon(ctx context.Context, groupID, jargon string) error
 
 	// ── member_profile ──
 	UpsertMemberProfile(ctx context.Context, profile entity.MemberProfile) error

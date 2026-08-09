@@ -11,8 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第三阶段：记忆系统（P3-004 记忆更新闭环待做） |
-| 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-011） |
+| 当前阶段 | 第四阶段：人格与插件（P4-001 人格系统待做） |
+| 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-014） |
 
 ```bash
 # 编译
@@ -24,7 +24,7 @@ go build ./...
 # 静态分析
 go vet ./...
 
-# 测试（已有多包单测：service/event、service/memory、service/agent、infra/onebot、infra/ai、pkg/config、pkg/ahocorasick）
+# 测试（已有多包单测：service/event、service/memory、service/agent、infra/onebot、infra/ai、infra/ai/tools、infra/sqlite、pkg/config、pkg/ahocorasick）
 go test ./...
 
 # 运行（连接 NapCat，需先配置 config.yaml 的 onebot.ws_url；缺失配置会自动写入默认模板）
@@ -75,13 +75,13 @@ PlumeBot
 当前阶段：
 
 ```text
-第三阶段：记忆系统
+第四阶段：人格与插件
 ```
 
 本阶段目标：
 
 ```text
-上下文窗口滚动、画像按需加载缓存、摘要压缩流水线。
+多群人设隔离、.so 插件动态加载运行。
 已完成：第一阶段（项目骨架）、第二阶段（基础设施接入）——
 P2-001 SQLite 存储层、P2-002 ZeroBot 连接层、P2-003 消息中间件链
 （日志 → 限流 → 敏感词过滤，敏感词为 Aho-Corasick 实装）、
@@ -91,12 +91,14 @@ PLUMEBOT_TEST_LLM=1 门控）。
 已完成：P3-001 上下文窗口（ring buffer，20→100 轮 + 压缩触发信号 + 管线持久化接线）；
 已完成：P3-002 画像加载与缓存（窗口内成员/群画像按需加载 + 内存缓存 + 延迟 N 轮淘汰，非窗口人物不加载）。
 已完成：P3-003 窗口压缩策略（一级压缩 LLM 摘要 + 二级融合/淘汰 + 摘要热链内存 + 长程归档 SQLite 重启回灌）。
-进行中：P3-004 记忆更新闭环。
+已完成：P3-004 记忆更新闭环（store_fact/learn_jargon/forget_fact 三工具，Agent 经 tool calling 写
+member_facts/group_jargon；黑话 pending/confirmed 状态机；会话身份经 domain.Session 注入 ctx，
+读在组装、写在 tool，见架构 §4.3.1）。
 ```
 
-禁止提前实现（第三阶段禁令）：
+禁止提前实现（跨阶段禁令，第三阶段禁令继续有效）：
 
-- 人格系统（P4-001）；
+- 人格系统（P4-001，下一任务，勿在后续阶段提前实现）；
 - 插件系统（P4-002/003）；
 - 触发模式与状态规则（P5-001/002）；
 - 完整 Agent 对话闭环（群聊回复闭环属 P6-002；当前管线末端 `tailHandler` 仅做持久化（窗口+SQLite），Agent 能力由 eino 直调验证）
@@ -164,7 +166,7 @@ plumebot/
 │   │   └── notice.go               #   通知事件 → 规则处理（stub）
 │   └── infra/                      # 基础设施，实现 domain 接口
 │       ├── onebot/                 #   ZeroBot 封装（已接入：matcher 分发 + 固定文案回复）
-│       ├── ai/                     #   eino Agent + 摘要器实现（P2-004 provider 注册中心 + 多模态转换 + tool 机制；P3-003 Summarizer 裸模型单次调用）
+│       ├── ai/                     #   eino Agent + 摘要器实现（P2-004 provider 注册中心 + 多模态转换 + tool 机制；P3-003 Summarizer 裸模型单次调用；P3-004 tools/ 记忆更新工具）
 │       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，9 张表 + migrations）
 │       │   └── migrations/        #     版本化 DDL 迁移文件
 │       ├── plugin_so/              #   plugin.Open() 实现（stub）
@@ -317,8 +319,8 @@ domain 零依赖
 现状：
 
 - `onebot/`：已接入（matcher 注册 + 事件转换 + 固定文案回复）；已实现、有单测。
-- `sqlite/`：已接入（P2-001，8 张表 + migrations）。
-- `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿）。
+- `sqlite/`：已接入（P2-001，9 张表 + migrations）。
+- `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿；P3-004：`ai/tools` 记忆更新工具 store_fact/learn_jargon/forget_fact，会话身份经 `domain.Session` 注入 ctx）。
 - `plugin_so/`、`plugin_exe/`：stub（返回 nil 或 error），待对应阶段实现。
 
 每个 infra 包必须：

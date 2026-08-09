@@ -42,6 +42,10 @@ const (
 	sqlListJargon   = `SELECT jargon FROM group_jargon WHERE group_id = ?`
 	sqlDeleteJargon = `DELETE FROM group_jargon WHERE group_id = ? AND jargon = ?`
 
+	sqlListConfirmedJargon = `SELECT jargon FROM group_jargon WHERE group_id = ? AND status = 'confirmed'`
+
+	sqlConfirmJargon = `UPDATE group_jargon SET status = 'confirmed' WHERE group_id = ? AND jargon = ?`
+
 	// ── member_profile ──
 
 	sqlUpsertMemberProfile = `INSERT INTO member_profile (group_id, user_id, activity, intimacy)
