@@ -7,7 +7,6 @@ import (
 	"plumebot/internal/service/agent"
 	"plumebot/internal/service/control"
 	"plumebot/internal/service/memory"
-	"plumebot/internal/service/persona"
 	"plumebot/internal/service/plugin"
 	"plumebot/pkg/config"
 )
@@ -16,7 +15,6 @@ import (
 type EventService struct {
 	agent    *agent.AgentService
 	memory   *memory.MemoryService
-	persona  *persona.PersonaService
 	plugin   *plugin.PluginService
 	control  *control.ControlService
 	msgChain Handler
@@ -27,7 +25,6 @@ type EventService struct {
 func NewEventService(
 	agent *agent.AgentService,
 	memory *memory.MemoryService,
-	persona *persona.PersonaService,
 	plugin *plugin.PluginService,
 	control *control.ControlService,
 	mwCfg config.MiddlewareConfig,
@@ -35,7 +32,6 @@ func NewEventService(
 	s := &EventService{
 		agent:   agent,
 		memory:  memory,
-		persona: persona,
 		plugin:  plugin,
 		control: control,
 	}

@@ -18,7 +18,7 @@ import (
 	"plumebot/internal/domain/entity"
 )
 
-// schemaFS 内嵌 migrations/ 目录下的全部版本化迁移文件（文件名序执行）。
+// schemaFS 内嵌 migrations/ 目录下的全部 DDL 迁移文件（文件名序执行）。
 //
 //go:embed migrations/*.sql
 var schemaFS embed.FS
@@ -31,7 +31,7 @@ type Storage struct {
 	db *sql.DB
 }
 
-// Open 打开（或创建）dataDir/plumebot.db，自动建表并插入默认人格。
+// Open 打开（或创建）dataDir/plumebot.db，自动建表（migrate 执行全部 DDL）。
 func Open(dataDir string) (*Storage, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("sqlite: 创建数据目录失败: %w", err)
@@ -55,11 +55,6 @@ func Open(dataDir string) (*Storage, error) {
 		return nil, fmt.Errorf("sqlite: 建表失败: %w", err)
 	}
 
-	if err := s.seedDefaultPersona(context.Background()); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("sqlite: 插入默认人格失败: %w", err)
-	}
-
 	return s, nil
 }
 
@@ -68,7 +63,7 @@ func (s *Storage) Close() error {
 	return s.db.Close()
 }
 
-// ──────────────────────────── migration / seed ────────────────────────────
+// ──────────────────────────── migration ────────────────────────────
 
 // migrate 执行嵌入的全部迁移文件 DDL（按文件名序拼接后逐条执行）。
 func (s *Storage) migrate(ctx context.Context) error {
@@ -97,19 +92,6 @@ func (s *Storage) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// seedDefaultPersona 在 persona 表中 groupid=0 不存在时插入默认人格。
-func (s *Storage) seedDefaultPersona(ctx context.Context) error {
-	var count int
-	if err := s.db.QueryRowContext(ctx, sqlCountDefaultPersona).Scan(&count); err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-	_, err := s.db.ExecContext(ctx, sqlInsertDefaultPersona)
-	return err
 }
 
 // ──────────────────────────── messages ────────────────────────────
@@ -279,48 +261,6 @@ func (s *Storage) ConfirmJargon(ctx context.Context, groupID, jargon string) err
 	return nil
 }
 
-// ──────────────────────────── member_profile ────────────────────────────
-
-// UpsertMemberProfile 插入或更新群聊个人画像（(group_id, user_id) 冲突时覆盖）。
-func (s *Storage) UpsertMemberProfile(ctx context.Context, p entity.MemberProfile) error {
-	_, err := s.db.ExecContext(ctx, sqlUpsertMemberProfile,
-		p.GroupID, p.UserID, p.Activity, p.Intimacy)
-	return err
-}
-
-// GetMemberProfile 按群和用户查询个人画像。不存在时返回 domain.ErrNotFound。
-func (s *Storage) GetMemberProfile(ctx context.Context, groupID, userID string) (*entity.MemberProfile, error) {
-	row := s.db.QueryRowContext(ctx, sqlGetMemberProfile, groupID, userID)
-
-	var p entity.MemberProfile
-	if err := row.Scan(&p.GroupID, &p.UserID, &p.Activity, &p.Intimacy); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
-		}
-		return nil, err
-	}
-	return &p, nil
-}
-
-// ListMemberProfiles 列出指定群内全部成员画像。
-func (s *Storage) ListMemberProfiles(ctx context.Context, groupID string) ([]entity.MemberProfile, error) {
-	rows, err := s.db.QueryContext(ctx, sqlListMemberProfiles, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []entity.MemberProfile
-	for rows.Next() {
-		var p entity.MemberProfile
-		if err := rows.Scan(&p.GroupID, &p.UserID, &p.Activity, &p.Intimacy); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
 // ──────────────────────────── member_facts ────────────────────────────
 
 // AddMemberFact 添加一条个人事实记忆。已存在的 (group_id, user_id, fact) 组合会被忽略。
@@ -357,9 +297,9 @@ func (s *Storage) DeleteMemberFact(ctx context.Context, groupID, userID, fact st
 // ──────────────────────────── persona ────────────────────────────
 
 // InsertPersona 插入一条人格模板，返回新记录的 ID。
+// agent 字段 UNIQUE：同一 agent 重复插入返回错误。
 func (s *Storage) InsertPersona(ctx context.Context, p entity.Persona) (int64, error) {
-	traits, _ := json.Marshal(p.Traits)
-	res, err := s.db.ExecContext(ctx, sqlInsertPersona, p.UserID, p.GroupID, p.Extend, string(traits))
+	res, err := s.db.ExecContext(ctx, sqlInsertPersona, p.Agent, p.Name, p.SystemPrompt)
 	if err != nil {
 		return 0, err
 	}
@@ -368,8 +308,7 @@ func (s *Storage) InsertPersona(ctx context.Context, p entity.Persona) (int64, e
 
 // UpdatePersona 更新指定 ID 的人格模板。
 func (s *Storage) UpdatePersona(ctx context.Context, p entity.Persona) error {
-	traits, _ := json.Marshal(p.Traits)
-	_, err := s.db.ExecContext(ctx, sqlUpdatePersona, p.UserID, p.GroupID, p.Extend, string(traits), p.ID)
+	_, err := s.db.ExecContext(ctx, sqlUpdatePersona, p.Agent, p.Name, p.SystemPrompt, p.ID)
 	return err
 }
 
@@ -378,30 +317,12 @@ func (s *Storage) GetPersona(ctx context.Context, id int64) (*entity.Persona, er
 	row := s.db.QueryRowContext(ctx, sqlGetPersona, id)
 
 	var p entity.Persona
-	var traits string
-	if err := row.Scan(&p.ID, &p.UserID, &p.GroupID, &p.Extend, &traits); err != nil {
+	if err := row.Scan(&p.ID, &p.Agent, &p.Name, &p.SystemPrompt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, domain.ErrNotFound
 		}
 		return nil, err
 	}
-	json.Unmarshal([]byte(traits), &p.Traits)
-	return &p, nil
-}
-
-// GetDefaultPersona 获取全局默认人格（groupid=0 的第一条）。不存在时返回 domain.ErrNotFound。
-func (s *Storage) GetDefaultPersona(ctx context.Context) (*entity.Persona, error) {
-	row := s.db.QueryRowContext(ctx, sqlGetDefaultPersona)
-
-	var p entity.Persona
-	var traits string
-	if err := row.Scan(&p.ID, &p.UserID, &p.GroupID, &p.Extend, &traits); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
-		}
-		return nil, err
-	}
-	json.Unmarshal([]byte(traits), &p.Traits)
 	return &p, nil
 }
 

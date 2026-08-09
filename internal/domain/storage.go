@@ -32,11 +32,6 @@ type Storage interface {
 	// ConfirmJargon 把一条黑话置为 confirmed；黑话不存在时返回 domain.ErrNotFound。
 	ConfirmJargon(ctx context.Context, groupID, jargon string) error
 
-	// ── member_profile ──
-	UpsertMemberProfile(ctx context.Context, profile entity.MemberProfile) error
-	GetMemberProfile(ctx context.Context, groupID, userID string) (*entity.MemberProfile, error)
-	ListMemberProfiles(ctx context.Context, groupID string) ([]entity.MemberProfile, error)
-
 	// ── member_facts ──
 	AddMemberFact(ctx context.Context, groupID, userID, fact string) error
 	ListMemberFacts(ctx context.Context, groupID, userID string) ([]string, error)
@@ -46,7 +41,6 @@ type Storage interface {
 	InsertPersona(ctx context.Context, persona entity.Persona) (int64, error)
 	UpdatePersona(ctx context.Context, persona entity.Persona) error
 	GetPersona(ctx context.Context, id int64) (*entity.Persona, error)
-	GetDefaultPersona(ctx context.Context) (*entity.Persona, error) // groupid = 0
 
 	// ── bot_state ──
 	UpsertBotState(ctx context.Context, state entity.BotState) error

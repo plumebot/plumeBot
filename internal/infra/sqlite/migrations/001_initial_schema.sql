@@ -1,7 +1,9 @@
 -- =============================================================================
 -- Migration: 001_initial_schema
--- 描述:      PlumeBot 初始数据库表结构，共 8 张业务表 + 1 个索引。
--- 创建时间:  2026-07
+-- 描述:      PlumeBot 数据库全部表结构（单文件；conversation_summary 与
+--           group_jargon.status 已并入，原 002/003 迁移文件删除）：
+--           共 8 张表 + 3 个索引。
+-- 创建时间:  2026-07（002/003 于 P3-005 合并）
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -40,58 +42,47 @@ CREATE TABLE IF NOT EXISTS group_profile (
 -- -----------------------------------------------------------------------------
 -- 3. group_jargon — 群黑话词典
 -- 作用:   存储群内特有词汇/梗，供 Agent 理解上下文时参考。
+-- 状态:   status=pending 待人工审核；confirmed 才进 prompt（P3-004 learn_jargon）。
 -- 约束:   (group_id, jargon) 唯一。
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS group_jargon (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     group_id TEXT    NOT NULL,                   -- 群 ID
     jargon   TEXT    NOT NULL,                   -- 黑话/梗文本
+    status   TEXT    NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed')),
     UNIQUE(group_id, jargon)
 );
 
 -- -----------------------------------------------------------------------------
--- 4. member_profile — 群聊个人画像
--- 作用:   按 (group_id, user_id) 唯一，记录某人在某个群的表现。
--- 字段:   活跃度、亲密度。
--- 注意:   事实记忆走 member_facts 表，不在此处冗余。
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS member_profile (
-    group_id  TEXT  NOT NULL,                    -- 群 ID
-    user_id   TEXT  NOT NULL,                    -- 用户 QQ 号
-    activity  REAL  NOT NULL DEFAULT 0,          -- 活跃度 (0~1)
-    intimacy  REAL  NOT NULL DEFAULT 0,          -- 与 bot 亲密度 (0~1)
-    PRIMARY KEY (group_id, user_id)
-);
-
--- -----------------------------------------------------------------------------
--- 5. member_facts — 个人事实记忆
+-- 4. member_facts — 成员事实记忆（私聊 / 群聊）
 -- 作用:   存储对某个用户的零散事实（如"喜欢猫"、"是程序员"）。
+--         group_id 空 = 私聊记忆，非空 = 群聊记忆（成员持久上下文唯一机制）。
 -- 约束:   (group_id, user_id, fact) 唯一。
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS member_facts (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id TEXT    NOT NULL,                   -- 群 ID
+    group_id TEXT    NOT NULL,                   -- 群 ID（私聊时为空）
     user_id  TEXT    NOT NULL,                   -- 用户 QQ 号
     fact     TEXT    NOT NULL,                   -- 事实描述
     UNIQUE(group_id, user_id, fact)
 );
 
 -- -----------------------------------------------------------------------------
--- 6. persona — 人格模板
--- 作用:   定义 bot 回复风格。groupid=0 为全局默认人格，
---         groupid!=0 为群专属人格。extend 字段实现继承链。
--- 种子:   启动时自动插入一条 (userid=0, groupid=0, extend=0, traits='[]')。
+-- 5. persona — 人格模板
+-- 作用:   定义 bot 人设。「人格选择 agent」：agent 字段绑定到某个 agent（按名）。
+-- 无 userid/groupid/extend（不做群级区分/继承）；默认模板 seed 由 P4-001 提供。
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS persona (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    userid  INTEGER NOT NULL DEFAULT 0,          -- 所属用户 ID
-    groupid INTEGER NOT NULL DEFAULT 0,          -- 0=全局，其他=群 ID
-    extend  INTEGER NOT NULL DEFAULT 0,          -- 继承父级 Persona.ID
-    traits  TEXT    NOT NULL DEFAULT '[]'        -- 性格标签 (JSON array)
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent         TEXT NOT NULL DEFAULT '',      -- 绑定的 agent 名（人格选择 agent）
+    name          TEXT NOT NULL DEFAULT '',      -- 展示名（给人看）
+    system_prompt TEXT NOT NULL DEFAULT ''       -- 完整人设文本（经 Instruction 注入）
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_persona_agent ON persona(agent);
+
 -- -----------------------------------------------------------------------------
--- 7. bot_state — Bot 群内状态
+-- 6. bot_state — Bot 群内状态
 -- 作用:   每个群一条，存储 bot 在本群的运行时状态
 --         （精力值、连续回复计数、冷却时间等），JSON blob。
 -- -----------------------------------------------------------------------------
@@ -101,7 +92,7 @@ CREATE TABLE IF NOT EXISTS bot_state (
 );
 
 -- -----------------------------------------------------------------------------
--- 8. plugin_config — 插件配置
+-- 7. plugin_config — 插件配置
 -- 作用:   按 (group_id, plugin_name) 唯一，存储某插件在某群的配置。
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS plugin_config (
@@ -110,3 +101,24 @@ CREATE TABLE IF NOT EXISTS plugin_config (
     config      TEXT NOT NULL DEFAULT '{}',      -- 配置 JSON
     PRIMARY KEY (group_id, plugin_name)
 );
+
+-- -----------------------------------------------------------------------------
+-- 8. conversation_summary — 摘要归档（1 会话 N 条）
+-- 作用:   存储被淘汰/被融合覆盖的窗口摘要（长程记忆，P3-003）。
+-- 约束:   (chat_id, seq) 唯一 —— seq 为会话内递增序号，upsert 幂等，
+--         回灌的旧摘要再次被覆盖时重复落库不产生冗余。
+-- 索引:   idx_conversation_summary_chat — 按会话 + seq 排序读取最新 N 条回灌。
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS conversation_summary (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    TEXT    NOT NULL,                -- 会话键：群聊=GroupID，私聊="private:"+UserID
+    seq        INTEGER NOT NULL,                -- 会话内递增序号（排序 + 幂等键）
+    text       TEXT    NOT NULL DEFAULT '',     -- 摘要文本
+    keywords   TEXT    NOT NULL DEFAULT '[]',   -- 关键词标签 (JSON array)
+    decisions  TEXT    NOT NULL DEFAULT '[]',   -- 关键决定 (JSON array)
+    created_at INTEGER NOT NULL DEFAULT 0,      -- 生成时间（Unix 秒）
+    UNIQUE(chat_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_summary_chat
+    ON conversation_summary(chat_id, seq);

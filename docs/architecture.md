@@ -48,10 +48,10 @@ ZeroBot (连接层，只管收发)
 插件系统               Agent 决策 (eino)
 命令分发              是否说话 / 说什么 / 调什么工具
 (/xxx)                   │
-                    ┌────┼────┐
-                    ▼    ▼    ▼
-                 [窗口] [个人画像] [群画像]
-                 内存   SQLite   SQLite
+                    ┌──────┼──────┐
+                    ▼              ▼
+                 [窗口]         [群画像]
+                 内存            SQLite
 ```
 
 ---
@@ -71,17 +71,18 @@ ZeroBot (连接层，只管收发)
   - 该 API 不支持关键词搜索，关键词检索走本地 SQLite
 - 作用：直接拼入 prompt 让 Agent 知道"刚刚在聊什么"
 
-### 4.2 群聊个人画像（中期）
+### 4.2 成员记忆（私聊 / 群聊，中期）
 
-- 存储：SQLite，按 `(group_id, user_id)` 唯一
-- 粒度：某个人在某个群里的表现（同人在不同群表现不同）
-- 内容：活跃度统计、亲密度、事实性记忆、兴趣话题
-- 更新：渐进式，非每次重算
-- 加载策略：
-  - 每次构建上下文时，仅加载当前窗口中出现的用户的画像
-  - 首次加载后缓存到内存结构体，后续直接从内存读，不重复查 SQL
-  - 当用户从窗口消失（消息被压缩淘汰），画像延迟 N 轮后再从内存移出（避免频繁加载/卸载）
-- 召回：精确查询 user_id
+- 存储：SQLite，`member_facts` 表，按 `(group_id, user_id, fact)` 唯一
+- 粒度：对某个用户的零散事实；`group_id` 区分场景——**空 = 私聊记忆，非空 = 群聊记忆**（同人在不同群可记不同事实）
+- 内容：事实性记忆、兴趣话题等原子条目（一条一记，各有独立生命周期：去重 / 删除）
+- 写入：Agent 经工具（store_fact / forget_fact，P3-004）实时更新，不并入画像整行重写
+- 读取：P6 prompt 组装时按当前会话成员现查注入到 §6 的 ② 会话画像块（「无界写入、有界注入」，每成员各 N 条，上限由组装消费方定，见 B-014）
+- 召回：`(group_id, user_id)` 精确查询
+
+> 说明：原「群聊个人画像（member_profile，活跃度/亲密度统计）」无写入者、无消费者，
+> 已移除（P3-005 数据模型变更）。成员持久上下文唯一机制即本节的 member_facts，
+> 私聊与群聊由 `group_id` 区分。
 
 ### 4.3 群聊画像（中期）
 
@@ -92,9 +93,9 @@ ZeroBot (连接层，只管收发)
 
 ### 4.3.1 画像（聚合）与条目记忆（明细）的分界
 
-（P3-004 讨论定案，防止实现时跑偏）
+（P3-004 讨论定案；member_profile 已于 P3-005 移除，聚合层仅余群画像 group_profile）
 
-- **聚合字段与条目记忆互补不冲突**：member_profile/group_profile 的字段是「聚合摘要」，member_facts/group_jargon 是「原子条目」，是同一问题在聚合层与明细层的两种形态。
+- **聚合字段与条目记忆互补不冲突**：group_profile 的字段是「聚合摘要」，member_facts/group_jargon 是「原子条目」，是同一问题在聚合层与明细层的两种形态。
   - 聚合字段**有界、整行重写**：一小撮标签/数值，周期分析或规则层整组重写（Upsert 一次覆盖全字段）；
   - 条目记忆**无界、逐条累积**：一条一条追加，各有独立生命周期（去重 / 审核 / 删除），**不并入 profile 整行 upsert**（避免并发整行竞态）。黑话的 pending/confirmed 审核状态机即此生命周期的体现。
 - **无界写入、有界注入**：条目记忆无界落库（小行 + 索引，与 messages 全量落库同性质）；真正有界的是注入 prompt 的量——组装时只注窗口内成员各 N 条事实 + confirmed 黑话，上限由 P6-001 消费方决定。
@@ -105,7 +106,6 @@ ZeroBot (连接层，只管收发)
 Agent 通过 eino Tool 机制驱动记忆更新，在对话中自行判断何时调用。
 
 - 事实记忆和群黑话由 Agent Tool 实时更新
-- 活跃度等统计数据由规则层自动维护
 - 群氛围标签由定时任务周期性分析
 
 事实冲突直接覆盖。具体 Tool 实现时再定。
@@ -146,9 +146,10 @@ Agent 通过 eino Tool 机制驱动记忆更新，在对话中自行判断何时
 
 ```
 ┌──────────────────────┐
-│ ① 系统人格            │  固定的，定义"你是谁"
+│ ① 系统人格            │  persona 模板的 system_prompt（按 agent 名加载），定义"你是谁"
 ├──────────────────────┤
-│ ② 群聊画像            │  群文化/黑话/氛围
+│ ② 会话画像            │  群画像（群文化/黑话/氛围 + confirmed 黑话）
+│                      │  + 窗口内成员事实（member_facts 各 N 条，见 §4.2 / B-014）
 ├──────────────────────┤
 │ ③ 压缩摘要            │  历史上下文（全量拼接）
 ├──────────────────────┤
@@ -158,43 +159,44 @@ Agent 通过 eino Tool 机制驱动记忆更新，在对话中自行判断何时
 └──────────────────────┘
 ```
 
+> ② 会话画像 = 群画像（group_profile）+ 窗口内成员事实（member_facts，每成员各 N 条）。
+> 成员事实与 confirmed 黑话均「读在组装」现查注入（§4.3.1，上限见 B-014）；
+> 私聊无群画像，② 仅含当前用户成员事实（group_id 空）。
+
 ---
 
 ## 7. 人格系统
 
 ### 7.1 核心思路
 
-人格由 Agent 自主演化，不是静态配置文件。Agent 在对话中感知环境后自行调整。
+人格（人设）= AI 自己的性格，用 **DB 人格模板**（persona 表）定义。**人格选择 agent**：
+模板行通过 `agent` 字段绑定到某个 agent（按 agent 名），运行时按 `cfg.Agent.Name` 加载对应模板注入；
+**不在 agent 配置中写人格 id**（配置只有 agent.name，不引用 persona）。
 
-### 7.2 存储
+### 7.2 存储（persona 表）
 
 ```sql
 persona (
-  id       INTEGER PK,
-  userid   INTEGER,     -- 用户 ID
-  groupid  INTEGER,     -- 群 ID，父级时为 0
-  extend   INTEGER,     -- 继承父级 persona.id，一父多子
-  traits   TEXT         -- 性格标签 JSON
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent         TEXT NOT NULL DEFAULT '',  -- 绑定的 agent 名（人格选择 agent），UNIQUE
+  name          TEXT NOT NULL DEFAULT '',  -- 展示名（给人看），不参与逻辑
+  system_prompt TEXT NOT NULL DEFAULT ''   -- 完整人设文本（经 Instruction 注入）
 );
 ```
 
-- `groupid = 0` → 全局默认人格（父级）
-- `groupid != 0` → 某群专属人格（子级，extend 指向父）
-- 查询：先按 `userid + groupid` 精确匹配，再通过 extend 递归向上合并父级人格
+- `agent` 是「人格选择 agent」的绑定字段（按 agent 名匹配 `cfg.Agent.Name`），`UNIQUE(agent)` 一人一格；
+- 移除原 `userid / groupid / extend / traits`（不做群级区分、不做 extend 继承；人设文本即模板本身）。
 
-### 7.3 更新流程（Agent 驱动）
+### 7.3 生效路径
 
-```
-Agent 感知到需要调整人格
-  → 调 update_persona tool
-  → 合并 extend 链生成完整人格
-  → 更新内存缓存，立即生效
-  → 异步写入 SQLite，持久化
-```
+启动时按 `cfg.Agent.Name` 查 persona 模板 → 其 `system_prompt` 经 `ChatModelAgentConfig.Instruction`
+注入 Agent（P2-004 方案 A'）。兜底链：模板 `system_prompt` → `config.agent.system_prompt` → `DefaultSystemPrompt`。
 
-### 7.4 初始化
+### 7.4 更新与初始化
 
-纯 SQL 初始化，不依赖种子文件。启动时 SQLite 中无数据则插入默认人格（groupid=0）。
+直接改 persona 表（人工/管理端）重启生效。「Agent 在对话中感知环境后自行调整人格」
+（原 update_persona tool 思路）暂缓，列为未来方向，见 roadmap B-016。
+启动时默认 agent 无模板则 seed 一条默认模板（P4-001）。
 
 ---
 
@@ -310,17 +312,19 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 | messages | 全量群聊消息存储，按 chat_id+时间索引，供关键词检索（后续可扩展向量检索） |
 | group_profile | 群画像（1群1条） |
 | group_jargon | 群黑话（1群N条） |
-| member_profile | 群内个人画像（1人1群1条） |
-| member_facts | 个人事实记忆（1人N条） |
-| persona | 人格模板（默认 + 群级），支持 extends 继承 |
+| member_facts | 成员事实记忆（1人N条；group_id 空=私聊，非空=群聊） |
+| persona | 人格模板（agent 绑定，见 §7） |
 | bot_state | bot 在各群的状态 |
 | plugin_config | 插件在各群的配置 |
+
+> 说明：共 8 张表（7 张业务表 + conversation_summary 归档摘要表）。member_profile（个人画像统计）
+> 已于 P3-005 移除——成员上下文由 member_facts 承担；人格为 DB 人格模板（见 §7）。
 
 ---
 
 ## 12. 待讨论方向
 
-- [x] 人格系统（多群人设隔离、模板热更新）
+- [x] 人格系统（DB 人格模板，人格选择 agent）
 - [x] 事件处理管线（完整 OneBot 事件覆盖清单）
 - [x] Agent 记忆更新闭环
 - [x] 情绪/状态系统
@@ -352,14 +356,12 @@ internal/
     entity/                         #   公共实体 (Message, Event, Profile...)
     agent.go                        #   Agent 接口
     memory.go                       #   Memory 接口
-    persona.go                      #   Persona 接口
     plugin.go                       #   Plugin 接口
     storage.go                      #   Storage 接口
     control.go                      #   Control 接口
   service/                          # 业务编排层，依赖 domain 接口
     agent/                          #   prompt 组装 → Agent 推理
-    memory/                         #   窗口 + 画像缓存 + 摘要流程
-    persona/                        #   extend 链 + 缓存
+    memory/                         #   窗口 + 群画像缓存 + 摘要流程
     plugin/                         #   发现、加载、路由
     control/                        #   触发判断 + 状态规则
     event/                          #   中间件链 + 分流编排
@@ -395,13 +397,12 @@ domain 零依赖
 ```
 main()
   ├── 1. load config.yaml
-  ├── 2. infra/sqlite.Init()         → 建表 + 默认人格
-  ├── 3. service/persona.Init()      → 加载 extend 链
-  ├── 4. service/plugin.Discover()   → 扫描 .so 加载
-  ├── 5. service/agent.Init()        → 构建 eino Agent + 注册 Tool
-  ├── 6. handler/message.Init()      → 组装中间件链 + 分流
-  ├── 7. handler/notice.Init()       → 通知规则
-  └── 8. infra/onebot.Run()          → ZeroBot 连接 NapCat，接收事件
+  ├── 2. infra/sqlite.Init()         → 建表 + 默认人格模板 seed
+  ├── 3. service/plugin.Discover()   → 扫描 .so 加载
+  ├── 4. service/agent.Init()        → 构建 eino Agent + 注册 Tool（按 cfg.Agent.Name 加载 persona 模板，system_prompt 经 Instruction 注入）
+  ├── 5. handler/message.Init()      → 组装中间件链 + 分流
+  ├── 6. handler/notice.Init()       → 通知规则
+  └── 7. infra/onebot.Run()          → ZeroBot 连接 NapCat，接收事件
 ```
 
 ### 14.4 消息链路
@@ -418,7 +419,7 @@ NapCat → OneBot WS → ZeroBot
   └── 普通消息 → control service 判断
         ├── 不满足 → 忽略
         └── 满足 →
-              context.Build (人格+画像+摘要+窗口)
+              context.Build (人格+群画像+摘要+窗口)
               → agent service → eino 推理 → Tool 调用
               → 记忆更新 → 状态更新
               → 回复

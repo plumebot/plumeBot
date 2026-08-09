@@ -16,7 +16,6 @@ import (
 	"plumebot/internal/service/control"
 	"plumebot/internal/service/event"
 	"plumebot/internal/service/memory"
-	"plumebot/internal/service/persona"
 	"plumebot/internal/service/plugin"
 	"plumebot/pkg/config"
 	"plumebot/pkg/logger"
@@ -77,10 +76,9 @@ func main() {
 	// 3. 注入 service
 	agentSvc := agent.NewAgentService(agentInfra)
 	memorySvc := memory.NewMemoryService(memory.NewWindow(), storageInfra, summarizerInfra)
-	personaSvc := persona.NewPersonaService(persona.Nop())
 	pluginSvc := plugin.NewPluginService(soPlugin, exePlugin)
 	controlSvc := control.NewControlService(control.Nop())
-	eventSvc := event.NewEventService(agentSvc, memorySvc, personaSvc, pluginSvc, controlSvc, cfg.Middleware)
+	eventSvc := event.NewEventService(agentSvc, memorySvc, pluginSvc, controlSvc, cfg.Middleware)
 
 	// 4. 注入 handler
 	msgHandler := handler.NewMessageHandler(eventSvc)

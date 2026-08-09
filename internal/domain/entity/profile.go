@@ -1,15 +1,5 @@
 package entity
 
-// MemberProfile 表示某个用户在某个群里的个人画像。
-// 按 (GroupID, UserID) 唯一。
-// 事实记忆和兴趣话题通过 member_facts 表查询，不在此处冗余存储。
-type MemberProfile struct {
-	GroupID  string  // 群 ID
-	UserID   string  // 用户 QQ 号
-	Activity float64 // 活跃度统计（0~1）
-	Intimacy float64 // 与 bot 的亲密度（0~1）
-}
-
 // GroupProfile 表示一个群的群聊画像，每个群一条。
 // 黑话词典通过 group_jargon 表查询，不在此处冗余存储。
 type GroupProfile struct {
@@ -21,12 +11,11 @@ type GroupProfile struct {
 	Atmosphere  []string // 氛围标签（如"轻松"、"技术向"）
 }
 
-// Persona 表示一条人格定义，支持 extends 继承链。
-// groupid=0 为全局默认人格（父级），groupid!=0 为群专属人格（子级）。
+// Persona 表示一条人格模板，「人格选择 agent」：通过 Agent 字段绑定到某个 agent（按名）。
+// Agent 字段 UNIQUE，一人一格；system_prompt 为完整人设文本，经 Instruction 注入。
 type Persona struct {
-	ID      int64    // 人格 ID
-	UserID  int64    // 所属用户 ID
-	GroupID int64    // 群 ID，0 表示全局默认
-	Extend  int64    // 继承的父级 Persona.ID，0 表示无继承
-	Traits  []string // 性格标签（如"幽默"、"毒舌"、"话少"）
+	ID           int64  // 人格模板 ID
+	Agent        string // 绑定的 agent 名（人格选择 agent）
+	Name         string // 展示名（给人看），不参与逻辑
+	SystemPrompt string // 完整人设文本
 }

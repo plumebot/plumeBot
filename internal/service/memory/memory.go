@@ -49,12 +49,6 @@ func (s *MemoryService) GetWindow(ctx context.Context, sessionID string) ([]enti
 	return s.memory.GetWindow(ctx, sessionID)
 }
 
-// GetMemberProfile 返回缓存的成员画像（P6 prompt 组装时使用）。
-// ok=false 表示未在窗口出现/未加载；ok=true 时 profile 可能为 nil（确认无画像）。
-func (s *MemoryService) GetMemberProfile(groupID, userID string) (*entity.MemberProfile, bool) {
-	return s.profiles.GetMemberProfile(groupID, userID)
-}
-
 // GetGroupProfile 返回缓存的群画像。
 func (s *MemoryService) GetGroupProfile(groupID string) (*entity.GroupProfile, bool) {
 	return s.profiles.GetGroupProfile(groupID)

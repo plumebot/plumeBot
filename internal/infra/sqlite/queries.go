@@ -1,12 +1,6 @@
 package sqlite
 
 const (
-	// ── persona seed ──
-
-	sqlCountDefaultPersona = `SELECT COUNT(*) FROM persona WHERE groupid = 0`
-
-	sqlInsertDefaultPersona = `INSERT INTO persona (userid, groupid, extend, traits) VALUES (0, 0, 0, '[]')`
-
 	// ── messages ──
 
 	sqlSaveMessage = `INSERT INTO messages (message_id, group_id, user_id, content, timestamp, message_type)
@@ -46,19 +40,6 @@ const (
 
 	sqlConfirmJargon = `UPDATE group_jargon SET status = 'confirmed' WHERE group_id = ? AND jargon = ?`
 
-	// ── member_profile ──
-
-	sqlUpsertMemberProfile = `INSERT INTO member_profile (group_id, user_id, activity, intimacy)
- VALUES (?, ?, ?, ?)
- ON CONFLICT(group_id, user_id) DO UPDATE SET
- activity=excluded.activity, intimacy=excluded.intimacy`
-
-	sqlGetMemberProfile = `SELECT group_id, user_id, activity, intimacy
- FROM member_profile WHERE group_id = ? AND user_id = ?`
-
-	sqlListMemberProfiles = `SELECT group_id, user_id, activity, intimacy
- FROM member_profile WHERE group_id = ?`
-
 	// ── member_facts ──
 
 	sqlAddMemberFact    = `INSERT OR IGNORE INTO member_facts (group_id, user_id, fact) VALUES (?, ?, ?)`
@@ -67,10 +48,9 @@ const (
 
 	// ── persona ──
 
-	sqlInsertPersona     = `INSERT INTO persona (userid, groupid, extend, traits) VALUES (?, ?, ?, ?)`
-	sqlUpdatePersona     = `UPDATE persona SET userid=?, groupid=?, extend=?, traits=? WHERE id=?`
-	sqlGetPersona        = `SELECT id, userid, groupid, extend, traits FROM persona WHERE id = ?`
-	sqlGetDefaultPersona = `SELECT id, userid, groupid, extend, traits FROM persona WHERE groupid = 0 LIMIT 1`
+	sqlInsertPersona = `INSERT INTO persona (agent, name, system_prompt) VALUES (?, ?, ?)`
+	sqlUpdatePersona = `UPDATE persona SET agent=?, name=?, system_prompt=? WHERE id=?`
+	sqlGetPersona    = `SELECT id, agent, name, system_prompt FROM persona WHERE id = ?`
 
 	// ── bot_state ──
 

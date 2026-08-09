@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
 | 当前阶段 | 第四阶段：人格与插件（P4-001 人格系统待做） |
-| 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-015） |
+| 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-016） |
 
 ```bash
 # 编译
@@ -81,7 +81,7 @@ PlumeBot
 本阶段目标：
 
 ```text
-多群人设隔离、.so 插件动态加载运行。
+人格模板化（DB persona 表）、.so 插件动态加载运行。
 已完成：第一阶段（项目骨架）、第二阶段（基础设施接入）——
 P2-001 SQLite 存储层、P2-002 ZeroBot 连接层、P2-003 消息中间件链
 （日志 → 限流 → 敏感词过滤，敏感词为 Aho-Corasick 实装）、
@@ -89,11 +89,13 @@ P2-004 eino Agent 接入（eino v0.8.13 + eino-ext openai，多模态消息、to
 provider 注册中心；真实 LLM 冒烟见 internal/infra/ai/spike_test.go 的 TestSpikeLiveLLM，
 PLUMEBOT_TEST_LLM=1 门控）。
 已完成：P3-001 上下文窗口（ring buffer，20→100 轮 + 压缩触发信号 + 管线持久化接线）；
-已完成：P3-002 画像加载与缓存（窗口内成员/群画像按需加载 + 内存缓存 + 延迟 N 轮淘汰，非窗口人物不加载）。
+已完成：P3-002 画像加载与缓存（群画像按需加载 + 内存缓存；窗口内成员画像 member_profile 已移除，见架构 §4.2）。
 已完成：P3-003 窗口压缩策略（一级压缩 LLM 摘要 + 二级融合/淘汰 + 摘要热链内存 + 长程归档 SQLite 重启回灌）。
 已完成：P3-004 记忆更新闭环（store_fact/learn_jargon/forget_fact 三工具，Agent 经 tool calling 写
 member_facts/group_jargon；黑话 pending/confirmed 状态机；会话身份经 entity.Session 注入 ctx，
 读在组装、写在 tool，见架构 §4.3.1）。
+已完成：P3-005 数据模型变更（移除 member_profile；member_facts 承担私聊+群聊成员记忆（group_id 空=私聊）；
+persona 重构为 agent 绑定人格模板，见架构 §7）。
 ```
 
 禁止提前实现（跨阶段禁令，第三阶段禁令继续有效）：
@@ -144,7 +146,6 @@ plumebot/
 │   │   ├── entity/                 #   公共实体（Message, Event, Profile...）
 │   │   ├── agent.go                #   Agent 接口（P2-004 由 infra/ai 实现）
 │   │   ├── memory.go               #   Memory 接口（P3-001 由 service/memory 实现）
-│   │   ├── persona.go              #   Persona 接口（stub）
 │   │   ├── plugin.go               #   Plugin 接口（stub）
 │   │   ├── storage.go              #   Storage 接口（P2-001 已实现）
 │   │   ├── control.go              #   Control 接口（stub）
@@ -157,8 +158,7 @@ plumebot/
 │   │   │   ├── sensitive.go        #     敏感词中间件（AC 自动机）
 │   │   │   └── *_test.go           #     核心单测
 │   │   ├── agent/                  #   薄透传：GenerateReply → domain.Agent
-│   │   ├── memory/                 #   上下文窗口 + 画像缓存 + 窗口压缩（P3-001/002/003 已实现）
-│   │   ├── persona/                #   stub
+│   │   ├── memory/                 #   上下文窗口 + 群画像缓存 + 窗口压缩（P3-001/002/003 已实现；成员画像已移除）
 │   │   ├── plugin/                 #   stub
 │   │   └── control/                #   stub
 │   ├── handler/                    # 事件处理入口（薄胶水，无业务逻辑）
@@ -167,8 +167,8 @@ plumebot/
 │   └── infra/                      # 基础设施，实现 domain 接口
 │       ├── onebot/                 #   ZeroBot 封装（已接入：matcher 分发 + 固定文案回复）
 │       ├── ai/                     #   eino Agent + 摘要器实现（P2-004 provider 注册中心 + 多模态转换 + tool 机制；P3-003 Summarizer 裸模型单次调用；P3-004 tools/ 记忆更新工具）
-│       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，9 张表 + migrations）
-│       │   └── migrations/        #     版本化 DDL 迁移文件
+│       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，8 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）
+│       │   └── migrations/        #     DDL 迁移文件（001 单文件，migrate 全量执行）
 │       ├── plugin_so/              #   plugin.Open() 实现（stub）
 │       └── plugin_exe/             #   exec 子进程实现（stub）
 ├── pkg/                            # 可复用工具
@@ -180,7 +180,7 @@ plumebot/
 ├── config.yaml                     # 本地配置文件（不入库，见 .gitignore；api_key 可用环境变量 PLUMEBOT_LLM_OPENAI_API_KEY 覆盖）
 ├── docs/
 │   ├── architecture.md             # 架构设计文档
-│   ├── roadmap.md                  # 任务台账（阶段表 + 遗留事项 B-003~B-015）
+│   ├── roadmap.md                  # 任务台账（阶段表 + 遗留事项 B-003~B-016）
 │   └── eino-notes.md               # eino v0.8.13 API 速查（P2-004 spike 产出，升级评估时对照）
 ├── CLAUDE.md                       # 本文件
 ├── README.md
@@ -260,8 +260,8 @@ domain 零依赖
 - **连接层无事件级 context**：onebot 适配层传 `context.Background()`；service Handler 已预留 ctx 参数（B-007，未来仅改 onebot 一处）。
 - **LLM provider 注册中心为注入式实例**（P2-004）：`ai.Registry` 经 main 组装注入，非包级全局单例；`Factory func(ctx, config.Config) (domain.Agent, error)` 接收**完整 Config**（LLM 段 + Tools 段在工厂内组装）；工具表经 `NewOpenAIFactory(tr *ToolsRegistry)` 闭包注入（Factory 签名固定）。
 - **Agent 实现细节**（P2-004，`internal/infra/ai`）：`EinoAgent` 封装 eino v0.8.13 的 `adk.ChatModelAgent` —— `Instruction` 注入固定人设、`Name`/`Description` 填 adk 元数据（为将来多 agent `NewAgentTool` 做准备）、`MaxIterations=20`（tool 循环上限）、仅当启用工具时才注入 `ToolsConfig`。工具挂在注入式 `ToolsRegistry` 上（无全局状态），`Register` 拒绝重复名。
-- **系统提示词经 Instruction 注入，人格不进 agent 层**（P2-004 方案 A'）：`agent.system_prompt` 配置 = 机器人固定人设，由 provider 工厂兜底（空 → `config.DefaultSystemPrompt`）后经 `ChatModelAgentConfig.Instruction` 注入；`domain.Agent.Generate` 收完整消息列表，P4 人格（群聊成员画像，动态数据）走消息列表携带，infra 零改动。
-- **agent 三要素配置化，多 agent 平滑演进**（P2-004）：`agent.name/description/system_prompt`（空值兜底 `config.DefaultAgentName/DefaultAgentDescription/DefaultSystemPrompt`）；`agent.name` 是 adk 元数据标识（multi-agent 路由），与 `bot.name`（QQ 展示名）语义独立不耦合；未来多 agent 演进为 `agents.list[]` + `active` 选择（每项一份三要素，LLM 保持全局 provider 注册中心），本期不实现。
+- **人格=DB 人格模板、人格选择 agent，经 Instruction 注入，不进 agent 层**（P2-004 方案 A' + P4-001 定案）：persona 表（agent 绑定字段 + name + system_prompt，无 userid/groupid/extend，见架构 §7）按 `cfg.Agent.Name` 加载模板，其 system_prompt 覆盖 `config.agent.system_prompt` 后由 provider 工厂兜底（空 → `config.DefaultSystemPrompt`）经 `ChatModelAgentConfig.Instruction` 注入；`domain.Agent.Generate` 收完整消息列表，infra 零改动。不在 agent 配置中写人格 id（配置只有 agent.name）。
+- **agent 三要素配置化，多 agent 平滑演进**（P2-004）：`agent.name/description/system_prompt`（空值兜底 `config.DefaultAgentName/DefaultAgentDescription/DefaultSystemPrompt`；persona 模板可覆盖 system_prompt，见上条）；`agent.name` 是 adk 元数据标识（multi-agent 路由），与 `bot.name`（QQ 展示名）语义独立不耦合；未来多 agent 演进为 `agents.list[]` + `active` 选择（每项一份三要素，LLM 保持全局 provider 注册中心），本期不实现。
 - **模板不替代 memory**（P2-004 评审）：eino ChatTemplate/StateModifier **不引入**（service 层不能 import infra 类型；组装逻辑不进 infra）；memory 存结构化数据不做渲染（同一数据源多渲染目标）；prompt 组装在 service 层（P6-001 完整五段），摘要压缩 prompt 归 service/memory（P3-003）。
 
 ## 6. 模块说明
@@ -319,7 +319,7 @@ domain 零依赖
 现状：
 
 - `onebot/`：已接入（matcher 注册 + 事件转换 + 固定文案回复）；已实现、有单测。
-- `sqlite/`：已接入（P2-001，9 张表 + migrations）。
+- `sqlite/`：已接入（P2-001，8 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）。
 - `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿；P3-004：`ai/tools` 记忆更新工具 store_fact/learn_jargon/forget_fact，会话身份经 `entity.Session` 注入 ctx）。
 - `plugin_so/`、`plugin_exe/`：stub（返回 nil 或 error），待对应阶段实现。
 

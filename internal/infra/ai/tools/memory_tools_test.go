@@ -99,6 +99,29 @@ func TestStoreFactIdempotent(t *testing.T) {
 	}
 }
 
+// TestStoreFactPrivate 私聊（会话无群 ID）时 store_fact 落库 group_id=""，验证「私聊个人记忆」。
+func TestStoreFactPrivate(t *testing.T) {
+	s := openTestStore(t)
+	mt := NewMemoryTools(s)
+	ctx := entity.WithSession(context.Background(), entity.Session{UserID: "u1"})
+
+	if _, err := invoke(t, mt.StoreFact(), ctx, map[string]string{"fact": "私聊里的爱好"}); err != nil {
+		t.Fatalf("store_fact(私聊) 失败: %v", err)
+	}
+	facts, err := s.ListMemberFacts(ctx, "", "u1")
+	if err != nil {
+		t.Fatalf("ListMemberFacts 失败: %v", err)
+	}
+	if len(facts) != 1 || facts[0] != "私聊里的爱好" {
+		t.Errorf("私聊事实应落库到 group_id=\"\"，实际 %v", facts)
+	}
+	// 群聊隔离：g1 下无该事实。
+	groupFacts, _ := s.ListMemberFacts(ctx, "g1", "u1")
+	if len(groupFacts) != 0 {
+		t.Errorf("私聊事实不应出现在群聊 g1，实际 %v", groupFacts)
+	}
+}
+
 // TestLearnJargonPending 黑话写入后为 pending（不在 confirmed 列表），确认后进入 confirmed。
 func TestLearnJargonPending(t *testing.T) {
 	s := openTestStore(t)
