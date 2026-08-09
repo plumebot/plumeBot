@@ -8,7 +8,7 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 
-	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 	"plumebot/internal/infra/sqlite"
 )
 
@@ -41,7 +41,7 @@ func invoke(t *testing.T, bt tool.BaseTool, ctx context.Context, args any) (stri
 func TestStoreFact(t *testing.T) {
 	s := openTestStore(t)
 	mt := NewMemoryTools(s)
-	ctx := domain.WithSession(context.Background(), domain.Session{GroupID: "g1", UserID: "u1"})
+	ctx := entity.WithSession(context.Background(), entity.Session{GroupID: "g1", UserID: "u1"})
 
 	if _, err := invoke(t, mt.StoreFact(), ctx, map[string]string{"fact": "喜欢猫"}); err != nil {
 		t.Fatalf("store_fact(缺省 user_id) 失败: %v", err)
@@ -86,7 +86,7 @@ func TestStoreFactNoSession(t *testing.T) {
 func TestStoreFactIdempotent(t *testing.T) {
 	s := openTestStore(t)
 	mt := NewMemoryTools(s)
-	ctx := domain.WithSession(context.Background(), domain.Session{GroupID: "g1", UserID: "u1"})
+	ctx := entity.WithSession(context.Background(), entity.Session{GroupID: "g1", UserID: "u1"})
 
 	for i := 0; i < 2; i++ {
 		if _, err := invoke(t, mt.StoreFact(), ctx, map[string]string{"fact": "喜欢猫"}); err != nil {
@@ -103,7 +103,7 @@ func TestStoreFactIdempotent(t *testing.T) {
 func TestLearnJargonPending(t *testing.T) {
 	s := openTestStore(t)
 	mt := NewMemoryTools(s)
-	ctx := domain.WithSession(context.Background(), domain.Session{GroupID: "g1", UserID: "u1"})
+	ctx := entity.WithSession(context.Background(), entity.Session{GroupID: "g1", UserID: "u1"})
 
 	if _, err := invoke(t, mt.LearnJargon(), ctx, map[string]string{"jargon": "kwi"}); err != nil {
 		t.Fatalf("learn_jargon 失败: %v", err)
@@ -136,7 +136,7 @@ func TestLearnJargonPending(t *testing.T) {
 func TestLearnJargonPrivate(t *testing.T) {
 	s := openTestStore(t)
 	mt := NewMemoryTools(s)
-	ctx := domain.WithSession(context.Background(), domain.Session{UserID: "u1"})
+	ctx := entity.WithSession(context.Background(), entity.Session{UserID: "u1"})
 
 	_, err := invoke(t, mt.LearnJargon(), ctx, map[string]string{"jargon": "kwi"})
 	if err == nil || !strings.Contains(err.Error(), "仅群聊") {
@@ -152,7 +152,7 @@ func TestLearnJargonPrivate(t *testing.T) {
 func TestForgetFact(t *testing.T) {
 	s := openTestStore(t)
 	mt := NewMemoryTools(s)
-	ctx := domain.WithSession(context.Background(), domain.Session{GroupID: "g1", UserID: "u1"})
+	ctx := entity.WithSession(context.Background(), entity.Session{GroupID: "g1", UserID: "u1"})
 
 	if _, err := invoke(t, mt.StoreFact(), ctx, map[string]string{"fact": "喜欢猫"}); err != nil {
 		t.Fatalf("store_fact 失败: %v", err)

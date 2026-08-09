@@ -1,10 +1,10 @@
-package domain
+package entity
 
 import "context"
 
 // Session 是一次 Agent 推理的会话身份：当前群 + 当前说话人。
 // 记忆工具（store_fact/learn_jargon/forget_fact，P3-004）经 ctx 读取它确定记忆归属；
-// 由消息管线（P6-002）在调用 Agent 前注入。domain 层零依赖，仅标准库。
+// 由消息管线（P6-002）在调用 Agent 前注入。entity 包零依赖，仅标准库。
 type Session struct {
 	GroupID string // 群 ID（私聊时为空）
 	UserID  string // 当前说话人 QQ 号

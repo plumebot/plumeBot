@@ -50,7 +50,7 @@ func main() {
 	defer storageInfra.Close()
 
 	// P3-004 记忆更新工具：Agent 对话中经 tool calling 写 SQLite（事实/黑话）。
-	// 会话身份（群/用户）由 P6-002 消息管线经 ctx 注入，工具经 domain.SessionFrom 读取。
+	// 会话身份（群/用户）由 P6-002 消息管线经 ctx 注入，工具经 entity.SessionFrom 读取。
 	memTools := tools.NewMemoryTools(storageInfra)
 	if err := toolsRegistry.Register("store_fact", memTools.StoreFact()); err != nil {
 		logger.Fatal("注册 store_fact 失败", logger.Err(err))

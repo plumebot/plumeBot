@@ -8,7 +8,6 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	memtools "plumebot/internal/infra/ai/tools"
 	"plumebot/internal/infra/sqlite"
@@ -42,7 +41,7 @@ func TestMemoryToolsAgentStoreFactLoop(t *testing.T) {
 		t.Fatalf("NewEinoAgent 失败: %v", err)
 	}
 
-	ctx := domain.WithSession(context.Background(), domain.Session{GroupID: "g1", UserID: "u1"})
+	ctx := entity.WithSession(context.Background(), entity.Session{GroupID: "g1", UserID: "u1"})
 	got, err := agent.Generate(ctx, []entity.ChatMessage{usrMsg("记住我喜欢猫")})
 	if err != nil {
 		t.Fatalf("Generate 失败: %v", err)
@@ -77,7 +76,7 @@ func TestMemoryToolsAgentLearnJargonLoop(t *testing.T) {
 		t.Fatalf("NewEinoAgent 失败: %v", err)
 	}
 
-	ctx := domain.WithSession(context.Background(), domain.Session{GroupID: "g1", UserID: "u1"})
+	ctx := entity.WithSession(context.Background(), entity.Session{GroupID: "g1", UserID: "u1"})
 	if _, err := agent.Generate(ctx, []entity.ChatMessage{usrMsg("群里都说 kwi")}); err != nil {
 		t.Fatalf("Generate 失败: %v", err)
 	}

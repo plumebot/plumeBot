@@ -92,7 +92,7 @@
 | 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 |
 |---|---------|------|:---:|------|------|------|
 | P6-001 | Prompt 组装联调 | 确认人格 → 群画像 → 压缩摘要 → 窗口 → 当前消息的 prompt 顺序正确 | P0 | service/agent + service/memory + service/persona | P3-003、P4-001 | 生成 prompt 格式符合架构文档第 6 节 |
-| P6-002 | 完整消息链路 | 端到端：收到群消息 → 中间件 → 触发判断 → 拼 prompt → Agent 推理 → 回复（文本沿 Handler 链上抛、onebot 闭包统一 ctx.Send，机制见 B-003）→ 记忆更新 → 窗口追加 | P0 | 全部 | 前五阶段全部完成 | bot 在群聊中被 @ 能正常回复；记忆正常更新；摘要正常生成 |
+| P6-002 | 完整消息链路 | 端到端：收到群消息 → 中间件 → 触发判断 → 拼 prompt → Agent 推理 → 回复（agent service 收 `Generate` 返回值经 ctx 内 `domain.Sender` 直接发送，机制见 B-003）→ 记忆更新 → 窗口追加 | P0 | 全部 | 前五阶段全部完成 | bot 在群聊中被 @ 能正常回复；记忆正常更新；摘要正常生成 |
 | P6-003 | 稳定性验证 | 连续运行数小时，检查内存泄漏、goroutine 泄漏、SQLite 文件增长、API 调用频率 | P1 | 全部 | P6-002 完成 | 内存不持续增长；goroutine 不泄漏；API 调用不超过限制 |
 
 ---
@@ -115,7 +115,7 @@
 
 | 编号 | 事项 | 来源 | 处理时机 | 说明 |
 |------|------|------|----------|------|
-| B-003 | 回复发送机制（已定方案 A） | P6-002 设计决策 | P6-002 实现时（签名改动随链路落地） | 选定「方案 A：回复上抛」：Handler 链签名 `(ctx,msg) error` → `(ctx,msg)(string,error)`，改动点 middleware.go 的 Handler 类型 + event.go 的 HandleMessage + message.go 的 Handle + onebot 闭包共 4 处；回复文本冒泡回 matcher 统一 `ctx.Send`（与限流/敏感词固定文案同一发送点，引用回复用 `message.ReplyWithMessage(原message_id, text)`，ZeroBot 不自动加 reply 段）；`domain.Sender` 暂不引入，仅当出现非响应式主动发送需求（异步插件、定时、P5 auto 后续发言）时再定义并 main 注入 |
+| B-003 | 回复发送机制（已定方案 B：Sender 注入 ctx） | P6-002 设计决策 | P6-002 实现时 | 选定「方案 B：Sender 注入 ctx」（替代原方案 A 回复上抛）：matcher 闭包构造 per-event 的 `domain.Sender`（实现内持有 `*zero.Ctx`）经 `domain.WithSender(ctx, s)` 注入，Handler 链签名保持 `(ctx,msg) error` 不变；需回复的环节（agent service 收 `Generate` 返回值、插件等）`domain.SenderFrom(ctx).Send(reply)` 直接发送，载荷为结构化 `entity.Reply{ReplyID, AtTarget, Parts}`（多模态 + 引用回复 + @，onebot 实现转 `message.ReplyWithMessage`/`message.At` 段后 `ctx.SendChain`）。限流/敏感词固定文案维持现状（闭包 `decideReply(err)` 处理哨兵错误，见 CLAUDE.md §5.6）。`domain.Sender` 不含动作能力（与回复正交，见 B-015），也不含非响应式主动发送——后者（异步插件、定时、P5 auto 后续发言）需显式目标，届时另定义 `SendTo` 形态并 main 注入 |
 | B-004 | 限流注册表淘汰 | P2-003 实现注释 | 群数量增长后 | ratelimit 的 map[string]*rate.Limiter 只增不删，需按空闲时长淘汰 |
 | B-005 | Control.Mode 空值兜底 | config 重构 | P5-001 接入 control 服务时 | 消费方自理默认值：mode 为空 → "mention"，在 control service 侧兜底（main 目前未接 cfg.Control） |
 | B-006 | 配置模板双份同步 | config 重构 | 新增配置字段时 | pkg/config/config.default.yaml 与根 config.yaml 需手动同步（config.go 注释已标明） |
@@ -127,6 +127,7 @@
 | B-012 | 摘要关键词召回未规划 | P3-003 验收边界 | 检索式长程记忆需要时 | 归档摘要（conversation_summary）带 keywords 字段，但当前只用于回灌热链底，无「按关键词召回相关摘要」的消费路径；届时实现关键词索引/检索（架构 §4.1「关键词检索走本地 SQLite」） |
 | B-013 | 氛围标签写入者归属 | P3-004 讨论 | 群氛围周期分析任务排期时 | `group_profile.atmosphere` 当前无写入者（P3-002 仅加载/缓存）；「氛围标签周期性 LLM 分析」（架构 §4.3）暂无任务承接。P3-004 确认黑话走 group_jargon 独立表 + 状态机，氛围标签仍留 profile（整组重写、非逐条生命周期，见架构 §4.3.1） |
 | B-014 | 事实/黑话注入上限归 P6-001 | P3-004 讨论 | P6-001 prompt 组装实现时 | 记忆「无界写入、有界注入」：member_facts/group_jargon 落库无上限，注入 prompt 的量设上限由组装消费方定（窗口内成员各 N 条事实、confirmed 黑话条数上限，见架构 §4.3.1）；存储层本期不做淘汰 |
+| B-015 | AI 群管理动作（设计已定） | 设计讨论（B-003 关联） | 有实际需求时 | AI 自主群管理（禁言/踢人/改名片等）经 agent tool 触发，不走回复通道：新建 `domain.GroupManager` 接口（Ban/Kick/...），与 `domain.Sender` 分离——动作权限不注入整条消息链（禁言等为高危能力），仅暴露给工具层；实现 per-event 经 ctx 注入（OneBot 动作绑定当次事件 `*zero.Ctx`，与 Session/Sender 同构，工具为共享单例）；护栏：per-group 配置开关（默认关）+ bot 需管理员权限 + 工具 Desc 写清触发边界 |
 
 ---
 

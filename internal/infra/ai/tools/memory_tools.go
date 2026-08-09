@@ -5,7 +5,7 @@
 //     这里只实现写入（store_fact/forget_fact）与学习（learn_jargon），不做查询型 tool；
 //   - 无界写入、有界注入：本层写入不做数量上限（小行 + 有索引，与 messages 全量落库同性质），
 //     注入 prompt 的上限归 P6-001 消费方决定；
-//   - 会话身份走 ctx：工具为共享单例，群/用户经 domain.Session 注入 Generate 的 ctx
+//   - 会话身份走 ctx：工具为共享单例，群/用户经 entity.Session 注入 Generate 的 ctx
 //     贯穿 eino 到 InvokableRun，避免构造期绑定或每消息重建 agent。
 package tools
 
@@ -19,6 +19,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 )
 
 // MemoryTools 是记忆更新工具的构造集合，持有 domain.Storage 用于写 SQLite。
@@ -90,10 +91,10 @@ func (m *MemoryTools) ForgetFact() tool.BaseTool {
 }
 
 // sessionFrom 读取会话身份；未注入时返回错误（提示模型无法确定记忆归属，而非写入错误归属）。
-func sessionFrom(ctx context.Context) (domain.Session, error) {
-	session, ok := domain.SessionFrom(ctx)
+func sessionFrom(ctx context.Context) (entity.Session, error) {
+	session, ok := entity.SessionFrom(ctx)
 	if !ok {
-		return domain.Session{}, errors.New("缺少会话上下文（group_id/user_id），无法写入记忆")
+		return entity.Session{}, errors.New("缺少会话上下文（group_id/user_id），无法写入记忆")
 	}
 	return session, nil
 }

@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
 | 当前阶段 | 第四阶段：人格与插件（P4-001 人格系统待做） |
-| 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-014） |
+| 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-015） |
 
 ```bash
 # 编译
@@ -92,7 +92,7 @@ PLUMEBOT_TEST_LLM=1 门控）。
 已完成：P3-002 画像加载与缓存（窗口内成员/群画像按需加载 + 内存缓存 + 延迟 N 轮淘汰，非窗口人物不加载）。
 已完成：P3-003 窗口压缩策略（一级压缩 LLM 摘要 + 二级融合/淘汰 + 摘要热链内存 + 长程归档 SQLite 重启回灌）。
 已完成：P3-004 记忆更新闭环（store_fact/learn_jargon/forget_fact 三工具，Agent 经 tool calling 写
-member_facts/group_jargon；黑话 pending/confirmed 状态机；会话身份经 domain.Session 注入 ctx，
+member_facts/group_jargon；黑话 pending/confirmed 状态机；会话身份经 entity.Session 注入 ctx，
 读在组装、写在 tool，见架构 §4.3.1）。
 ```
 
@@ -180,7 +180,7 @@ plumebot/
 ├── config.yaml                     # 本地配置文件（不入库，见 .gitignore；api_key 可用环境变量 PLUMEBOT_LLM_OPENAI_API_KEY 覆盖）
 ├── docs/
 │   ├── architecture.md             # 架构设计文档
-│   ├── roadmap.md                  # 任务台账（阶段表 + 遗留事项 B-003~B-011）
+│   ├── roadmap.md                  # 任务台账（阶段表 + 遗留事项 B-003~B-015）
 │   └── eino-notes.md               # eino v0.8.13 API 速查（P2-004 spike 产出，升级评估时对照）
 ├── CLAUDE.md                       # 本文件
 ├── README.md
@@ -256,7 +256,7 @@ domain 零依赖
 ### 5.6 已确立的架构决策
 
 - **中间件链在 service/event**：ZeroBot 无中间件机制（只有 Rule/Matcher/Engine.midHandler），业务管线属编排层，放 service 可单测。
-- **发送能力在 infra/onebot**：ZeroBot 的 `ctx` 只在连接层可见（无 CtxFromEvent，`zero.GetBot` 拿到的 Ctx 的 Event 为 nil，只能用于 SendGroupMessage/SendPrivateMessage/CallAction）。限流/敏感词命中由 matcher 内 `ctx.Send` 固定文案回复（`rateLimitedReply`/`sensitiveWordReply` 常量）。Agent 回复采用**方案 A：回复上抛**——Handler 链签名 `(ctx,msg) error` → `(ctx,msg)(string,error)`，回复文本冒泡回 matcher 统一 `ctx.Send`（见 roadmap B-003）；`domain.Sender` 暂不引入，仅当出现非响应式主动发送需求（异步插件、定时、P5 auto 后续发言）时再定义。
+- **发送能力在 infra/onebot**：ZeroBot 的 `ctx` 只在连接层可见（无 CtxFromEvent，`zero.GetBot` 拿到的 Ctx 的 Event 为 nil，只能用于 SendGroupMessage/SendPrivateMessage/CallAction）。限流/敏感词命中由 matcher 内 `ctx.Send` 固定文案回复（`rateLimitedReply`/`sensitiveWordReply` 常量）。Agent 回复采用**方案 B：Sender 注入 ctx**——matcher 闭包构造 per-event 的 `domain.Sender`（持有 `*zero.Ctx`）经 `domain.WithSender` 注入，Handler 链签名保持 `(ctx,msg) error`，需回复的环节 `domain.SenderFrom(ctx).Send(entity.Reply)` 直接发送，载荷结构化（多模态 + 引用回复 + @，见 roadmap B-003）。`domain.Sender` 不含动作能力（禁言/踢人等经 `domain.GroupManager` 供 agent tool 调用，见 B-015）；非响应式主动发送（异步插件、定时、P5 auto 后续发言）需显式目标，届时另定义 `SendTo` 形态并 main 注入。
 - **连接层无事件级 context**：onebot 适配层传 `context.Background()`；service Handler 已预留 ctx 参数（B-007，未来仅改 onebot 一处）。
 - **LLM provider 注册中心为注入式实例**（P2-004）：`ai.Registry` 经 main 组装注入，非包级全局单例；`Factory func(ctx, config.Config) (domain.Agent, error)` 接收**完整 Config**（LLM 段 + Tools 段在工厂内组装）；工具表经 `NewOpenAIFactory(tr *ToolsRegistry)` 闭包注入（Factory 签名固定）。
 - **Agent 实现细节**（P2-004，`internal/infra/ai`）：`EinoAgent` 封装 eino v0.8.13 的 `adk.ChatModelAgent` —— `Instruction` 注入固定人设、`Name`/`Description` 填 adk 元数据（为将来多 agent `NewAgentTool` 做准备）、`MaxIterations=20`（tool 循环上限）、仅当启用工具时才注入 `ToolsConfig`。工具挂在注入式 `ToolsRegistry` 上（无全局状态），`Register` 拒绝重复名。
@@ -320,7 +320,7 @@ domain 零依赖
 
 - `onebot/`：已接入（matcher 注册 + 事件转换 + 固定文案回复）；已实现、有单测。
 - `sqlite/`：已接入（P2-001，9 张表 + migrations）。
-- `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿；P3-004：`ai/tools` 记忆更新工具 store_fact/learn_jargon/forget_fact，会话身份经 `domain.Session` 注入 ctx）。
+- `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿；P3-004：`ai/tools` 记忆更新工具 store_fact/learn_jargon/forget_fact，会话身份经 `entity.Session` 注入 ctx）。
 - `plugin_so/`、`plugin_exe/`：stub（返回 nil 或 error），待对应阶段实现。
 
 每个 infra 包必须：
