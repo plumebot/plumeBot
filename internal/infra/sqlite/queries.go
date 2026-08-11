@@ -52,6 +52,8 @@ const (
 	sqlUpdatePersona = `UPDATE persona SET agent=?, name=?, system_prompt=? WHERE id=?`
 	sqlGetPersona    = `SELECT id, agent, name, system_prompt FROM persona WHERE id = ?`
 
+	sqlGetPersonaByAgent = `SELECT id, agent, name, system_prompt FROM persona WHERE agent = ?`
+
 	// ── bot_state ──
 
 	sqlUpsertBotState = `INSERT INTO bot_state (group_id, state) VALUES (?, ?)

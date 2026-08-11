@@ -3,8 +3,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
+	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler"
 	"plumebot/internal/infra/ai"
 	"plumebot/internal/infra/ai/tools"
@@ -59,6 +62,31 @@ func main() {
 	}
 	if err := toolsRegistry.Register("forget_fact", memTools.ForgetFact()); err != nil {
 		logger.Fatal("注册 forget_fact 失败", logger.Err(err))
+	}
+
+	// P4-001 人格模板：按 cfg.Agent.Name 加载 DB 人格模板，其 system_prompt 覆盖
+	// config.agent.system_prompt 后交给 provider 工厂（工厂对空值兜底 DefaultSystemPrompt）。
+	// 默认 agent 无模板则 seed 一条默认模板（固化当前生效人设，之后改 DB 重启生效）。
+	agentName := cfg.Agent.Name
+	if agentName == "" {
+		agentName = config.DefaultAgentName
+	}
+	persona, err := storageInfra.GetPersonaByAgent(ctx, agentName)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		prompt := cfg.Agent.SystemPrompt
+		if prompt == "" {
+			prompt = config.DefaultSystemPrompt
+		}
+		if _, err := storageInfra.InsertPersona(ctx, entity.Persona{Agent: agentName, Name: agentName, SystemPrompt: prompt}); err != nil {
+			logger.Fatal("seed 默认人格模板失败", logger.Err(err))
+		}
+		cfg.Agent.SystemPrompt = prompt
+	case err != nil:
+		logger.Fatal("加载人格模板失败", logger.Err(err))
+	case persona.SystemPrompt != "":
+		// 模板非空才覆盖；空模板（如人工清空）保留 config 值，兜底链仍成立。
+		cfg.Agent.SystemPrompt = persona.SystemPrompt
 	}
 
 	agentInfra, err := llmRegistry.NewAgent(ctx, *cfg)

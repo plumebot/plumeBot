@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第四阶段：人格与插件（P4-001 人格系统待做） |
+| 当前阶段 | 第四阶段：人格与插件（P4-002 .so 插件加载待做） |
 | 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-016） |
 
 ```bash
@@ -96,6 +96,9 @@ member_facts/group_jargon；黑话 pending/confirmed 状态机；会话身份经
 读在组装、写在 tool，见架构 §4.3.1）。
 已完成：P3-005 数据模型变更（移除 member_profile；member_facts 承担私聊+群聊成员记忆（group_id 空=私聊）；
 persona 重构为 agent 绑定人格模板，见架构 §7）。
+已完成：P4-001 人格系统（按 cfg.Agent.Name 从 persona 表加载人格模板 GetPersonaByAgent，其 system_prompt
+经覆盖 config.agent.system_prompt 后交 provider 工厂兜底（模板 → config.agent.system_prompt → DefaultSystemPrompt），
+经 Instruction 注入；默认 agent 无模板则 seed 一条默认模板固化当前生效人设；组装在 main 侧，infra/ai 零改动，见架构 §7）。
 ```
 
 禁止提前实现（跨阶段禁令，第三阶段禁令继续有效）：

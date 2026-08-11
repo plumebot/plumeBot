@@ -2,8 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 )
 
@@ -90,5 +92,32 @@ func TestPersonaSchema(t *testing.T) {
 	// UNIQUE(agent)：同 agent 重复插入报错。
 	if _, err := s.InsertPersona(ctx, entity.Persona{Agent: "PlumeBot", Name: "另一个", SystemPrompt: "..."}); err == nil {
 		t.Error("同 agent 重复插入应触发 UNIQUE 错误")
+	}
+}
+
+// TestGetPersonaByAgent 校验按 agent 名查询人格模板（命中返回字段 / 未命中 ErrNotFound）。
+func TestGetPersonaByAgent(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("打开测试数据库失败: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	if _, err := s.InsertPersona(ctx, entity.Persona{Agent: "PlumeBot", Name: "默认", SystemPrompt: "你是 PlumeBot，一个赛博群友。"}); err != nil {
+		t.Fatalf("InsertPersona 失败: %v", err)
+	}
+
+	got, err := s.GetPersonaByAgent(ctx, "PlumeBot")
+	if err != nil {
+		t.Fatalf("GetPersonaByAgent 失败: %v", err)
+	}
+	if got.Agent != "PlumeBot" || got.Name != "默认" || got.SystemPrompt != "你是 PlumeBot，一个赛博群友。" {
+		t.Errorf("字段不符: %+v", got)
+	}
+
+	// 未命中 → ErrNotFound。
+	if _, err := s.GetPersonaByAgent(ctx, "不存在"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("应返回 ErrNotFound, 实际: %v", err)
 	}
 }

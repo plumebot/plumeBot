@@ -326,6 +326,21 @@ func (s *Storage) GetPersona(ctx context.Context, id int64) (*entity.Persona, er
 	return &p, nil
 }
 
+// GetPersonaByAgent 按绑定的 agent 名查询人格模板（人格选择 agent，agent 字段 UNIQUE）。
+// 不存在时返回 domain.ErrNotFound。
+func (s *Storage) GetPersonaByAgent(ctx context.Context, agent string) (*entity.Persona, error) {
+	row := s.db.QueryRowContext(ctx, sqlGetPersonaByAgent, agent)
+
+	var p entity.Persona
+	if err := row.Scan(&p.ID, &p.Agent, &p.Name, &p.SystemPrompt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
 // ──────────────────────────── bot_state ────────────────────────────
 
 // UpsertBotState 插入或更新 bot 在指定群的运行时状态（group_id 冲突时覆盖）。

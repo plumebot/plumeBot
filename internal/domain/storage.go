@@ -41,6 +41,8 @@ type Storage interface {
 	InsertPersona(ctx context.Context, persona entity.Persona) (int64, error)
 	UpdatePersona(ctx context.Context, persona entity.Persona) error
 	GetPersona(ctx context.Context, id int64) (*entity.Persona, error)
+	// GetPersonaByAgent 按绑定的 agent 名查询人格模板；不存在时返回 domain.ErrNotFound。
+	GetPersonaByAgent(ctx context.Context, agent string) (*entity.Persona, error)
 
 	// ── bot_state ──
 	UpsertBotState(ctx context.Context, state entity.BotState) error
