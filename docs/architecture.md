@@ -20,7 +20,7 @@
 |----|------|------|
 | OneBot 连接层 | ZeroBot | Go 生态 OneBot v11 框架 |
 | Agent 引擎 | eino (CloudWeGo) | 字节跳动开源 AI Agent 框架，支持 ChatModelAgent / DeepAgent / Compose |
-| 存储 | SQLite + turso/sqlite | 纯 Go 驱动，无 cgo |
+| 存储 | SQLite + modernc.org/sqlite | 纯 Go 驱动，无 cgo |
 | 日志 | uber/zap | 高性能结构化日志 |
 | 配置 | gopkg.in/yaml.v3 | YAML 格式配置文件 |
 | 向量检索 | LLM API embedding（默认关闭） | 可选开启，调 LLM embedding 接口；关闭时走 SQLite 关键词+时间检索 |

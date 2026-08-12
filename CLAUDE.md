@@ -11,8 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第四阶段：人格与插件（P4-001/002 已完成，进入第五阶段） |
-| 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-016） |
+| 当前阶段 | 第五阶段：触发控制（P4 人格与插件已完结） |
+| 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B-003~B-020） |
 
 ```bash
 # 编译
@@ -75,13 +75,13 @@ PlumeBot
 当前阶段：
 
 ```text
-第四阶段：人格与插件
+第五阶段：触发控制
 ```
 
 本阶段目标：
 
 ```text
-人格模板化（DB persona 表）、子进程插件动态加载运行。
+mention/auto 双模式切换，精力/冷却/连续回复规则生效（P5-001/002）。
 已完成：第一阶段（项目骨架）、第二阶段（基础设施接入）——
 P2-001 SQLite 存储层、P2-002 ZeroBot 连接层、P2-003 消息中间件链
 （日志 → 限流 → 敏感词过滤，敏感词为 Aho-Corasick 实装）、
@@ -102,14 +102,14 @@ persona 重构为 agent 绑定人格模板，见架构 §7）。
 已完成：P4-002 插件系统（go-plugin 子进程 + 指令集协议：entity.PluginRequest/PluginResult{Reply, Actions}，
 internal/infra/plugin_exe 做 go-plugin net/rpc 接线（手写 shim，免 protoc），host 侧 service/plugin 发现路由（plugin.json）+ 命令分发分支；
 只定义协议 + 宿主校验（ValidatePluginResult），不执行回复/动作，见架构 §8.6 与 B-017）。
+已完成：第四阶段（人格与插件）全部完结，进入第五阶段。
 ```
 
-禁止提前实现（跨阶段禁令，第三阶段禁令继续有效）：
+禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：
 
-- 人格系统（P4-001，下一任务，勿在后续阶段提前实现）；
 - 插件回复/动作**执行**（P4-002 只定义协议，回复发送归 P6-002、群管理动作归 B-015，勿提前实装）；
-- 触发模式与状态规则（P5-001/002）；
-- 完整 Agent 对话闭环（群聊回复闭环属 P6-002；当前管线末端 `tailHandler` 仅做持久化（窗口+SQLite），Agent 能力由 eino 直调验证）
+- 完整 Agent 对话闭环（群聊回复闭环属 P6-002；当前管线末端 tail 仅做持久化（窗口+SQLite）+ 插件命令分发，Agent 能力由 eino 直调验证）；
+- 端到端压测（P6-003）
 
 ## 3. 技术栈
 
@@ -185,7 +185,7 @@ plumebot/
 ├── config.yaml                     # 本地配置文件（不入库，见 .gitignore；api_key 可用环境变量 PLUMEBOT_LLM_OPENAI_API_KEY 覆盖）
 ├── docs/
 │   ├── architecture.md             # 架构设计文档
-│   ├── roadmap.md                  # 任务台账（阶段表 + 遗留事项 B-003~B-016）
+│   ├── roadmap.md                  # 任务台账（阶段表 + 遗留事项 B-003~B-020）
 │   └── eino-notes.md               # eino v0.8.13 API 速查（P2-004 spike 产出，升级评估时对照）
 ├── CLAUDE.md                       # 本文件
 ├── README.md
@@ -306,7 +306,7 @@ domain 零依赖
 - 限流：`golang.org/x/time/rate` 令牌桶，按群（私聊按用户）独立，超时返回 `ErrRateLimited`；
 - 敏感词：`pkg/ahocorasick` 匹配，空词表 = 不过滤；
 - 日志中间件记录 message_id/group_id/user_id/message_type/content，日志不重复（infra/onebot 不再打消息 Info）；
-- 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）。
+- 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录，不发送，见架构 §10.2）。
 
 ### 6.4 internal/handler/
 

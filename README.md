@@ -9,7 +9,7 @@
 | Go | 1.21+ |
 | ZeroBot | OneBot v11 连接层 |
 | eino | AI Agent 引擎 (CloudWeGo) |
-| turso/sqlite | SQLite 驱动，纯 Go 无 cgo |
+| modernc.org/sqlite | SQLite 驱动，纯 Go 无 cgo |
 | uber/zap | 结构化日志 |
 | go-plugin | 插件动态加载（子进程 stdio，自定义指令集协议） |
 | Go testing | 标准库测试 |
@@ -62,4 +62,4 @@ plumebot/
 
 ## 当前阶段
 
-第一阶段：项目骨架。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。
+第五阶段：触发控制（P4 人格与插件已完结）。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。
