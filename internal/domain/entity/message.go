@@ -1,5 +1,5 @@
 // Package entity 定义领域层公共实体，所有结构体均为纯数据结构，
-// 不包含任何业务逻辑或外部依赖。
+// 不包含任何业务逻辑或外部依赖；仅允许只读的结构校验函数（见 plugin_validate.go）。
 package entity
 
 // Message 表示一条聊天消息的核心字段。

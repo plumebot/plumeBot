@@ -24,7 +24,7 @@
 | 日志 | uber/zap | 高性能结构化日志 |
 | 配置 | gopkg.in/yaml.v3 | YAML 格式配置文件 |
 | 向量检索 | LLM API embedding（默认关闭） | 可选开启，调 LLM embedding 接口；关闭时走 SQLite 关键词+时间检索 |
-| 插件 | Go plugin(.so) + exe 子进程 | .so 为主方案，exe 为可添加补充 |
+| 插件 | 子进程 stdio（HashiCorp go-plugin，net/rpc 变体） | 原 .so 方案因 Windows 不可用废弃；插件按自定义指令集协议返回结构化结果（见 §8.6） |
 | 测试 | Go 标准库 testing | 零额外依赖 |
 
 **外部依赖清单（除 NapCat 外无任何额外服务）：**
@@ -202,24 +202,31 @@ persona (
 
 ## 8. 插件系统
 
-### 8.1 两种形态
+> 设计变更（P4-002 前置，Windows 约束）：原「.so 动态加载」主方案**废弃**。Go 官方 `plugin` 包
+> （`-buildmode=plugin` / `plugin.Open()`）仅支持 Linux/FreeBSD/macOS——Windows 开发机不可用、禁交叉编译；
+> 且插件无卸载 API（非真热，只能热添加）、与主程序同进程运行（panic 拖垮整个 bot）、
+> 插件需与主程序完全同 Go 版本编译。插件统一改为**子进程 stdio 通信**（原 §8.3「exe 子进程」提升为主方案）。
+
+### 8.1 插件形态（单一形态：子进程）
 
 | 形态 | 说明 | 优先级 |
 |------|------|:---:|
-| 动态加载 | Go package 编译为 `.so`，运行时 `plugin.Open()` 动态加载，实现统一接口 | 主方案 |
-| exe 子进程 | fork 独立进程，stdio JSON 通信，任意语言实现 | 可添加方案 |
+| 子进程 stdio | 插件为独立进程，主程序经 stdio 通信；跨平台、进程隔离、真热重载（重启子进程） | 主方案 |
 
-### 8.2 Go 动态加载
+> 实现选型（P4-002 定案）：**HashiCorp go-plugin，net/rpc 变体**——握手/版本协商/崩溃检测/热重载齐全，
+> 纯 Go 无 cgo、免 protoc 代码生成（stdlib net/rpc + gob 序列化结构化结果）；插件为 Go（同 module 内编译）。
+> gRPC 变体留作将来支持非 Go 语言插件的升级路径。
 
-- 插件包实现统一接口，编译为 `-buildmode=plugin` 输出 `.so`
-- 主程序运行时扫描目录 `plugin.Open()` 加载
-- 支持热加载/卸载，无需重编译主程序
+### 8.2 子进程 stdio 通信
 
-### 8.3 exe 插件（补充）
+- 传输：stdio（非网络），主进程 ↔ 插件子进程
+- 格式：go-plugin 协议（net/rpc + gob）；插件 = 同 module 内 `plugins/<name>/main.go` 编译出的独立 exe
+- 热重载：插件代码变更 → 重启该插件子进程，bot 本体不动、无需重编译主程序
+- 隔离：插件崩溃不影响主进程；宿主经 go-plugin 检测进程退出（自动重启属 B 类遗留）
 
-- 传输：stdio（非网络）
-- 格式：一行 JSON（主进程→stdin），一行 JSON（stdout→主进程）
-- 任意语言实现，读 stdin 写 stdout 即可
+### 8.3 .so 动态加载（已废弃）
+
+原主方案，因 Windows 不可用 + 非真热 + 同进程无隔离而废弃。本节仅作决策记录，不再实现。
 
 ### 8.4 插件发现
 
@@ -230,6 +237,24 @@ persona (
 - 插件 = 命令分发（`/天气 北京` → 精确匹配 → 直接返回）
 - Tool = Agent 能力（"今天好热" → Agent 判断 → 调 weatherTool → 自然语言回复）
 - 两者并存，互不冲突
+
+### 8.6 插件协议（自定义规则，P4-002 定案）
+
+插件遵循统一的**指令集协议**：**插件零权限、只声明意图，宿主是唯一执行者**——插件进程碰不到 OneBot API，
+安全/审计/权限收敛在宿主侧（与 B-015 护栏精神一致）。
+
+- **请求**（宿主 → 插件）：`PluginRequest{Command, Args, Session{GroupID, UserID, MessageID}}`，
+  `group_id` 空 = 私聊（沿用 member_facts 约定）；`proto` 版本字段预留演进。
+- **结果**（插件 → 宿主）：`PluginResult{Reply, Actions}`——
+  - `Reply`：单条回复，多段混排 `Segments`（`text` / `image` / `face`），消息级 `quote`（引用触发消息）
+    与 `at`（`""` / `"sender"` / 具体 user_id）；
+  - `Actions`：附加动作，强类型枚举 `GroupOp`（`mute` / `unmute` / `kick` / `set_card`），
+    对齐 B-015 `domain.GroupManager` 能力集。
+- **执行范围（P4-002 定案）**：本期**只定义协议 + 宿主校验**（`Validate()` 校验枚举/必填字段），
+  收到的 Result 校验后记录、**不执行**——回复发送归 P6-002（B-003 Sender），群管理动作执行归 B-015
+  （GroupManager + per-group 开关 + 管理员校验）。协议完整定义，保证插件可表达这些操作，执行器后置。
+- **协议类型落点**：`internal/domain/entity`（业务实体，单一事实来源）；`infra/plugin_exe` 内含
+  go-plugin 的 RPC 接线（宿主/插件共用，import domain/entity）。插件与宿主同 module 编译，gob 类型天然一致。
 
 ---
 
@@ -372,10 +397,9 @@ internal/
     onebot/                         #   ZeroBot 封装
     ai/                             #   eino Agent 实现
     sqlite/                         #   SQLite 存储实现
-    plugin_so/                      #   plugin.Open() 实现
-    plugin_exe/                     #   exec 子进程实现
+    plugin_exe/                     #   子进程插件 SDK（go-plugin net/rpc，宿主与插件共用）
 pkg/                                # 可复用工具
-plugins/                            # .so 文件目录
+plugins/                            # 插件目录（运行时，插件子进程可执行文件）
 data/                               # SQLite 自动生成
 ```
 
@@ -398,7 +422,7 @@ domain 零依赖
 main()
   ├── 1. load config.yaml
   ├── 2. infra/sqlite.Init()         → 建表 + 默认人格模板 seed
-  ├── 3. service/plugin.Discover()   → 扫描 .so 加载
+  ├── 3. service/plugin.Discover()   → 扫描 plugins/ 拉起子进程插件
   ├── 4. service/agent.Init()        → 构建 eino Agent + 注册 Tool（按 cfg.Agent.Name 加载 persona 模板，system_prompt 经 Instruction 注入）
   ├── 5. handler/message.Init()      → 组装中间件链 + 分流
   ├── 6. handler/notice.Init()       → 通知规则

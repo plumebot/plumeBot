@@ -11,7 +11,7 @@
 | eino | AI Agent 引擎 (CloudWeGo) |
 | turso/sqlite | SQLite 驱动，纯 Go 无 cgo |
 | uber/zap | 结构化日志 |
-| Go plugin | 插件动态加载 (.so) |
+| go-plugin | 插件动态加载（子进程 stdio，自定义指令集协议） |
 | Go testing | 标准库测试 |
 
 ## 快速启动
@@ -46,7 +46,7 @@ plumebot/
 │   ├── handler/          # 事件处理入口
 │   └── infra/            # 基础设施实现
 ├── pkg/                  # 可复用工具
-├── plugins/              # .so 插件目录
+├── plugins/              # 插件目录
 ├── data/                 # SQLite 运行时生成
 ├── docs/                 # 文档
 └── config.yaml           # 配置文件

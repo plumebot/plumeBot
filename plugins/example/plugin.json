@@ -1,0 +1,6 @@
+{
+  "name": "example",
+  "path": "example.exe",
+  "commands": ["echo"],
+  "description": "回显演示：返回文本+图片段与一个禁言动作（宿主仅校验不执行）"
+}

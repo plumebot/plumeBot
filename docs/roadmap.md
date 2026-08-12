@@ -11,7 +11,7 @@
 | 第一阶段 | 项目骨架 | 可编译、零外部依赖的空框架 | ✅ |
 | 第二阶段 | 基础设施接入 | ZeroBot 连通 NapCat + eino 可用 + SQLite 落盘 | ✅ |
 | 第三阶段 | 记忆系统 | 上下文窗口 + 画像 + 压缩摘要 | ✅ |
-| 第四阶段 | 人格与插件 | 人格模板化 + .so 插件加载 |
+| 第四阶段 | 人格与插件 | 人格模板化 + 子进程插件加载 | ✅ |
 | 第五阶段 | 触发控制 | mention/auto 模式 + 状态规则 |
 | 第六阶段 | 联调验收 | 完整消息链路跑通，bot 可对话 |
 
@@ -65,18 +65,25 @@
 
 ## 第四阶段｜人格与插件
 
-目标：人格模板化（DB persona 表）、.so 插件动态加载运行。
+目标：人格模板化（DB persona 表）、子进程插件动态加载运行。
 
 > 设计变更（P4-001 定案，迭代）：人格改为 **DB 人格模板、人格选择 agent**（persona 表加 agent 绑定字段，
 > 移除 userid/groupid/extend，见架构 §7）；member_profile 表移除（成员上下文由 member_facts 承担，
 > 私聊/群聊经 group_id 区分）。开发期直接改 001 schema（原 002/003 迁移已并入 001）+ 删本地 dev 库，
 > 不追加 drop 迁移；变更由第四阶段前的 **P3-005** 处理，再进入 P4-001。
+>
+> 设计变更（P4-002 前置，Windows 约束）：原「.so 插件」主方案**废弃**（Go `plugin` 包仅支持
+> Linux/FreeBSD/macOS——Windows 不可用、禁交叉编译；且无卸载 API 非真热、同进程无隔离），
+> 插件统一为**子进程 stdio 通信**，原 P4-003「exe 子进程」机制提升为主方案，**P4-002/P4-003 合并**
+> （见架构 §8）。选型**定案：HashiCorp go-plugin（net/rpc 变体）**。插件遵循自定义**指令集协议**
+> （返回结构化 Reply + Actions，见架构 §8.6）；**本期只定义协议 + 宿主校验，不执行**——回复发送归
+> P6-002（B-003），群管理动作执行归 B-015（护栏）。`infra/plugin_so` stub 随本任务删除。
 
 | 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 |
 |---|---------|------|:---:|------|------|------|
 | P4-001 | 人格系统 | 按 cfg.Agent.Name 从 persona 表加载人格模板（GetPersonaByAgent），其 system_prompt 经 Instruction 注入 Agent；默认 agent 无模板则 seed 默认模板；兜底链：模板 → config.agent.system_prompt → DefaultSystemPrompt | P0 | infra/ai + infra/sqlite | P3-005、P2-004 | 启动按 agent 名加载模板生效；无模板兜底默认人设 |
-| P4-002 | .so 插件加载 | 实现 domain.Plugin 接口的 Go plugin 版本：扫描 plugins/ 目录 → plugin.Open() → 注册命令路由 | P0 | infra/plugin_so | P1 全部 | 编写测试 .so 插件，启动后自动扫描加载，命令匹配可执行 |
-| P4-003 | exe 插件加载（补充） | 实现 exec 子进程版本：启动 exe → stdin JSON → 读 stdout 响应；以可添加方案实现 | P2 | infra/plugin_exe | P4-002 完成 | 测试 exe 插件可正常调用并返回结果 |
+| P4-002 | 子进程插件加载（吸收原 P4-003） | 定义插件**指令集协议**（entity.PluginRequest/PluginResult + infra/plugin_exe go-plugin RPC 接线，见架构 §8.6）+ 插件发现/命令路由（service/plugin，plugin.json）+ event service 命令分支（/开头 → 分发 → 校验 Result 记录，不发送） | P0 | domain/entity + infra/plugin_exe + service/plugin + service/event + cmd/bot | P1 全部 | 协议类型 + Validate 单测全绿；示例插件经 plugin.json 发现并拉起，命令匹配返回结构化 Result，宿主校验通过并记录（不执行回复/动作） |
+| P4-003 | ~~exe 插件加载（补充）~~ | 已并入 P4-002（原「启动 exe → stdin JSON → 读 stdout 响应」机制提升为主方案，见上方设计变更） | - | infra/plugin_exe | - | - |
 
 ---
 
@@ -135,6 +142,10 @@
 | B-014 | 事实/黑话注入上限归 P6-001 | P3-004 讨论 | P6-001 prompt 组装实现时 | 记忆「无界写入、有界注入」：member_facts/group_jargon 落库无上限，注入 prompt 的量设上限由组装消费方定（窗口内成员各 N 条事实、confirmed 黑话条数上限，注入到 §6 的 ② 会话画像块，见架构 §4.3.1/§6）；存储层本期不做淘汰 |
 | B-015 | AI 群管理动作（设计已定） | 设计讨论（B-003 关联） | 有实际需求时 | AI 自主群管理（禁言/踢人/改名片等）经 agent tool 触发，不走回复通道：新建 `domain.GroupManager` 接口（Ban/Kick/...），与 `domain.Sender` 分离——动作权限不注入整条消息链（禁言等为高危能力），仅暴露给工具层；实现 per-event 经 ctx 注入（OneBot 动作绑定当次事件 `*zero.Ctx`，与 Session/Sender 同构，工具为共享单例）；护栏：per-group 配置开关（默认关）+ bot 需管理员权限 + 工具 Desc 写清触发边界 |
 | B-016 | Agent 动态人格演化暂缓 | P4-001 设计决策 | 有需要时 | 人格为 DB 人格模板、人格选择 agent（persona.agent 绑定，见架构 §7），无 update_persona tool / 无运行时演化；如需 per-group 人设或 Agent 在对话中自主调整人格，届时再加工具与维度 |
+| B-017 | 插件回复/动作**执行** | P4-002 协议先行决策 | P6-002 / B-015 | 插件返回 `entity.PluginResult{Reply, Actions}` 仅协议定义 + 宿主校验记录（架构 §8.6），不执行。回复发送（文本/图片/引用/@，`Reply.Segments`/`Quote`/`At`）归 P6-002（B-003 Sender）；群管理动作（`Actions`，mute/unmute/kick/set_card）归 B-015（GroupManager + per-group 开关 + 管理员校验） |
+| B-018 | 插件热重载 | P4-002 范围外 | 有需要时 | plugin.json / 插件 exe 变更（mtime）→ 自动重启该插件进程（go-plugin 原生支持重启，mtime 轮询零新依赖） |
+| B-019 | 插件崩溃自动重启 + 超时策略细化 | P4-002 范围外 | 有需要时 | go-plugin 已能检测进程退出；崩溃自动重启与单次调用超时策略（当前 `infra/plugin_exe` 固定 5s）细化后置 |
+| B-020 | `plugin_config` 表使用 + 插件自持状态 | P4-002 范围外 | 有需要时 | 按群插件配置（§11 `plugin_config` 表）与插件自持状态读写，当前 `plugin.json` 仅承载命令表元数据 |
 
 ---
 

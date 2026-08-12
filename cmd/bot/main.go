@@ -13,7 +13,6 @@ import (
 	"plumebot/internal/infra/ai/tools"
 	"plumebot/internal/infra/onebot"
 	"plumebot/internal/infra/plugin_exe"
-	"plumebot/internal/infra/plugin_so"
 	"plumebot/internal/infra/sqlite"
 	"plumebot/internal/service/agent"
 	"plumebot/internal/service/control"
@@ -98,13 +97,19 @@ func main() {
 	if err != nil {
 		logger.Fatal("初始化摘要器失败", logger.Err(err))
 	}
-	soPlugin := &plugin_so.PluginSOStub{}
-	exePlugin := &plugin_exe.PluginEXEStub{}
+	// P4-002 插件系统：go-plugin 子进程（stdio）。service/plugin 经注入的工厂拉起插件进程，
+	// 避免 service 直接依赖 infra。协议见架构 §8.6：只定义协议 + 宿主校验，不执行回复/动作。
+	pluginSvc := plugin.NewPluginService(func(exePath string) (plugin.PluginClient, error) {
+		return plugin_exe.NewClient(exePath)
+	})
+	if err := pluginSvc.Discover("./plugins"); err != nil {
+		logger.Fatal("插件发现失败", logger.Err(err))
+	}
+	defer pluginSvc.Close()
 
 	// 3. 注入 service
 	agentSvc := agent.NewAgentService(agentInfra)
 	memorySvc := memory.NewMemoryService(memory.NewWindow(), storageInfra, summarizerInfra)
-	pluginSvc := plugin.NewPluginService(soPlugin, exePlugin)
 	controlSvc := control.NewControlService(control.Nop())
 	eventSvc := event.NewEventService(agentSvc, memorySvc, pluginSvc, controlSvc, cfg.Middleware)
 
