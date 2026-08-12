@@ -28,3 +28,5 @@ go.work.sum
 reasonix.toml
 # 本地配置文件（缺失时由 pkg/config 自动写入模板）
 /config.yaml
+# 运行时生成的 SQLite 数据目录
+/data/
