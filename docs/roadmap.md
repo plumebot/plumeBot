@@ -79,11 +79,11 @@
 > （返回结构化 Reply + Actions，见架构 §8.6）；**本期只定义协议 + 宿主校验，不执行**——回复发送归
 > P6-002（B-003），群管理动作执行归 B-015（护栏）。`infra/plugin_so` stub 随本任务删除。
 
-| 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 |
-|---|---------|------|:---:|------|------|------|
-| P4-001 | 人格系统 | 按 cfg.Agent.Name 从 persona 表加载人格模板（GetPersonaByAgent），其 system_prompt 经 Instruction 注入 Agent；默认 agent 无模板则 seed 默认模板；兜底链：模板 → config.agent.system_prompt → DefaultSystemPrompt | P0 | infra/ai + infra/sqlite | P3-005、P2-004 | 启动按 agent 名加载模板生效；无模板兜底默认人设 |
-| P4-002 | 子进程插件加载（吸收原 P4-003） | 定义插件**指令集协议**（entity.PluginRequest/PluginResult + infra/plugin_exe go-plugin RPC 接线，见架构 §8.6）+ 插件发现/命令路由（service/plugin，plugin.json）+ event service 命令分支（/开头 → 分发 → 校验 Result 记录，不发送） | P0 | domain/entity + infra/plugin_exe + service/plugin + service/event + cmd/bot | P1 全部 | 协议类型 + Validate 单测全绿；示例插件经 plugin.json 发现并拉起，命令匹配返回结构化 Result，宿主校验通过并记录（不执行回复/动作） |
-| P4-003 | ~~exe 插件加载（补充）~~ | 已并入 P4-002（原「启动 exe → stdin JSON → 读 stdout 响应」机制提升为主方案，见上方设计变更） | - | infra/plugin_exe | - | - |
+| 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 | 状态 |
+|---|---------|------|:---:|------|------|------|:--:|
+| P4-001 | 人格系统 | 按 cfg.Agent.Name 从 persona 表加载人格模板（GetPersonaByAgent），其 system_prompt 经 Instruction 注入 Agent；默认 agent 无模板则 seed 默认模板；兜底链：模板 → config.agent.system_prompt → DefaultSystemPrompt | P0 | infra/ai + infra/sqlite | P3-005、P2-004 | 启动按 agent 名加载模板生效；无模板兜底默认人设 | ✅ |
+| P4-002 | 子进程插件加载（吸收原 P4-003） | 定义插件**指令集协议**（entity.PluginRequest/PluginResult + infra/plugin_exe go-plugin RPC 接线，见架构 §8.6）+ 插件发现/命令路由（service/plugin，plugin.json）+ event service 命令分支（/开头 → 分发 → 校验 Result 记录，不发送） | P0 | domain/entity + infra/plugin_exe + service/plugin + service/event + cmd/bot | P1 全部 | 协议类型 + Validate 单测全绿；示例插件经 plugin.json 发现并拉起，命令匹配返回结构化 Result，宿主校验通过并记录（不执行回复/动作） | ✅ |
+| P4-003 | ~~exe 插件加载（补充）~~ | 已并入 P4-002（原「启动 exe → stdin JSON → 读 stdout 响应」机制提升为主方案，见上方设计变更） | - | infra/plugin_exe | - | - | - |
 
 ---
 
