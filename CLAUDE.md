@@ -342,7 +342,7 @@ domain 零依赖
 - 配置文件加载与解析；
 - `//go:embed config.default.yaml` 嵌入默认模板：`Load()` 时配置文件不存在则写入模板再加载；
 - **空值兜底由消费方负责**（如限流 rate≤0→2、burst≤0→20、max_wait≤0→10s；WsURL 空→`ws://127.0.0.1:3001`；Bot.Name 空→`PlumeBot`）；config 层不改写字段；
-- **唯一例外：`llm.openai.api_key`** 支持环境变量 `PLUMEBOT_LLM_OPENAI_API_KEY` 覆盖（非空时优先于文件值，敏感密钥不入配置文件）；
+- **唯一例外：`chat_model` 条目的 `api_key`** 支持环境变量 `PLUMEBOT_LLM_OPENAI_API_KEY` 覆盖（非空时优先于文件值，敏感密钥不入配置文件；`vision_model` 条目密钥由文件提供）；
 - 新增配置字段必须**双处同步**：`pkg/config/config.default.yaml` + 根 `config.yaml`（config.go 注释已标明）。根 `config.yaml` 已被 `.gitignore`（本地文件，含用户真实密钥，不入库）；守卫测试 `TestRootConfigYAMLSyncedWithDefault` 比较时排除 `api_key` 字段。
 
 ## 7. 代码规则

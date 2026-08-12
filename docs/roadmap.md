@@ -131,10 +131,10 @@
 | B-003 | 回复发送机制（已定方案 B：Sender 注入 ctx） | P6-002 设计决策 | P6-002 实现时 | 选定「方案 B：Sender 注入 ctx」（替代原方案 A 回复上抛）：matcher 闭包构造 per-event 的 `domain.Sender`（实现内持有 `*zero.Ctx`）经 `domain.WithSender(ctx, s)` 注入，Handler 链签名保持 `(ctx,msg) error` 不变；需回复的环节（agent service 收 `Generate` 返回值、插件等）`domain.SenderFrom(ctx).Send(reply)` 直接发送，载荷为结构化 `entity.Reply{ReplyID, AtTarget, Parts}`（多模态 + 引用回复 + @，onebot 实现转 `message.ReplyWithMessage`/`message.At` 段后 `ctx.SendChain`）。限流/敏感词固定文案维持现状（闭包 `decideReply(err)` 处理哨兵错误，见 CLAUDE.md §5.6）。`domain.Sender` 不含动作能力（与回复正交，见 B-015），也不含非响应式主动发送——后者（异步插件、定时、P5 auto 后续发言）需显式目标，届时另定义 `SendTo` 形态并 main 注入 |
 | B-004 | 限流注册表淘汰 | P2-003 实现注释 | 群数量增长后 | ratelimit 的 map[string]*rate.Limiter 只增不删，需按空闲时长淘汰 |
 | B-005 | Control.Mode 空值兜底 | config 重构 | P5-001 接入 control 服务时 | 消费方自理默认值：mode 为空 → "mention"，在 control service 侧兜底（main 目前未接 cfg.Control） |
-| B-006 | 配置模板双份同步 | config 重构 | 新增配置字段时 | pkg/config/config.default.yaml 与根 config.yaml 需手动同步（config.go 注释已标明） |
+| B-006 | 配置模板双份同步 | config 重构 | 新增配置字段时 | pkg/config/config.default.yaml 与根 config.yaml 需手动同步（config.go 注释已标明）。阶段 2 llm 数组化后守卫测试 `TestRootConfigYAMLSyncedWithDefault` 已随 `models[]` 更新，api_key 按条目逐项排除比较 |
 | B-007 | 连接级 context 传播 | P2-003 设计讨论 | ZeroBot 支持或自研连接时 | ZeroBot 无事件级 ctx，连接层传 context.Background()；service Handler 已预留 ctx 参数，未来仅需改 onebot 一处 |
 | B-008 | eino 版本升级观察 | P2-004 评审决策 | eino-ext 跟进 v0.9 后 | 当前锁定 eino v0.8.13 + eino-ext openai v0.1.13。**不升 v0.9 的理由**（原 P2-004 计划文档 §3 决策，已归档进本行）：① eino-ext 生态滞后——eino-ext main 仍 require `eino v0.7.13`，与 v0.9 schema 大改（ToolInfo 移除 Bound/InvokableRun、agent 迁 adk）组合存在编译/行为不兼容风险；② v0.9 取最终文本需 Runner + AsyncIterator 事件循环，v0.8 为薄门面（消息进、文本出），本项目不需要事件流复杂度；③ v0.9 发布太新，文档与示例几乎全是旧 API，踩坑成本高；④ 本项目需要的多模态字段（UserInputMultiContent/MessageInputImage）、tool 自动循环在 v0.8.13 全部可用且非废弃；⑤ 迁移成本可控——domain.Agent 是门面，infra/ai 内部换实现不影响上层。API 速查见 docs/eino-notes.md；待 eino-ext 跟进 v0.9 且 adk API 稳定后评估迁移 |
-| B-009 | OneBot 图片段 → ChatMessage 映射 | P2-004 范围边界 | P6 接线时 | OneBot image 段（file/url 字段）→ entity.ContentPart 映射 P2-004 未做（entity.Message 未改）；NapCat 图片 URL 可达性（bot 侧能否直接访问）需验证 |
+| B-009 | 多模态消息模型 / 描述机制 | P2-004 范围边界 | P6-001 装配接线 | **阶段 1/2 已完成（P5 多模态修复 + 描述机制，见 docs/design-multimodal-fix.md）**。阶段 1：entity.Message 去 `Content` 改 `Parts []ContentPart`，convert 段→Parts 映射（image 存 URL 不存 base64、at→PartTypeAt、face/reply 丢弃），SQLite messages 改 parts 列，敏感词/命令走 PlainText()、日志/压缩走 Render()。阶段 2：llm 数组化（`models[]` + `chat_model`/`vision_model` 引用 name，env 限定 chat 条目）、`domain.MediaDescriber` + `EinoMediaDescriber`（拉图→base64→视觉模型）、base64:// 入链闭合（`data/image_cache/<md5>` 路径）。剩余：① NapCat 图片 URL 可达性已加门控 spike（`TestSpikeNapCatImageReachable`，需真实 NapCat 复验）；② 惰性装配接线（P6-001 拼 ChatMessage 时经 BuildContext 调用描述器 + 最近 N 轮预算 + 内存缓存，需配置 `vision_model`）；③ 阶段 3 原生多模态（`native_multimodal` 配置开关，默认关，字段已占位） |
 | B-010 | 画像缓存淘汰延迟配置化（已失效） | P3-002 实现 | P3-005 已移除 member_profile | `profileEvictDelay`（成员画像延迟淘汰轮数）随 member_profile 移除而删除，本项失效 |
 | B-011 | 画像渐进式更新未规划（已失效） | P3-002 验收边界 | P3-005 已移除 member_profile | member_profile 无写入者、无消费者，P3-005 决定移除（架构 §4.2）；本项随之失效，成员上下文仅余 member_facts |
 | B-012 | 摘要关键词召回未规划 | P3-003 验收边界 | 检索式长程记忆需要时 | 归档摘要（conversation_summary）带 keywords 字段，但当前只用于回灌热链底，无「按关键词召回相关摘要」的消费路径；届时实现关键词索引/检索（架构 §4.1「关键词检索走本地 SQLite」） |
@@ -146,6 +146,8 @@
 | B-018 | 插件热重载 | P4-002 范围外 | 有需要时 | plugin.json / 插件 exe 变更（mtime）→ 自动重启该插件进程（go-plugin 原生支持重启，mtime 轮询零新依赖） |
 | B-019 | 插件崩溃自动重启 + 超时策略细化 | P4-002 范围外 | 有需要时 | go-plugin 已能检测进程退出；崩溃自动重启与单次调用超时策略（当前 `infra/plugin_exe` 固定 5s）细化后置 |
 | B-020 | `plugin_config` 表使用 + 插件自持状态 | P4-002 范围外 | 有需要时 | 按群插件配置（§11 `plugin_config` 表）与插件自持状态读写，当前 `plugin.json` 仅承载命令表元数据 |
+| B-021 | 引用回复（reply 段）解析 | 多模态修复阶段 1 裁剪 | P6 有需要时 | 入站 `reply` 段当前被丢弃（face/forward/json/xml/music 同为永久简化，但 reply 不同）。引用回复是强上下文信号：支持需解析引用 `message_id`，从窗口 / SQLite 找回原文并入上下文。P6 级能力，未排期 |
+| B-022 | `data/image_cache/` 文件只增不清 | 阶段 2 base64 入链闭合 | 有需要时 | `internal/infra/imagecache` 按内容 md5 去重落盘（同图幂等），但无引用计数/淘汰，长期运行会累积缓存文件；届时按体积/时间做清理策略 |
 
 ---
 

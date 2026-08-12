@@ -245,17 +245,33 @@ func TestSpikeLiveLLM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("加载配置失败: %v", err)
 	}
+	// 对话模型条目：chat_model 引用 name，空 → models[0]。
+	chatIdx := -1
+	if cfg.LLM.ChatModel == "" {
+		chatIdx = 0
+	} else {
+		for i := range cfg.LLM.Models {
+			if cfg.LLM.Models[i].Name == cfg.LLM.ChatModel {
+				chatIdx = i
+				break
+			}
+		}
+	}
+	if chatIdx < 0 {
+		t.Fatal("未配置对话模型：llm.chat_model 未指向任何 models 条目")
+	}
+	entry := &cfg.LLM.Models[chatIdx]
 	if v := os.Getenv("PLUMEBOT_TEST_LLM_BASE_URL"); v != "" {
-		cfg.LLM.OpenAI.BaseURL = v
+		entry.BaseURL = v
 	}
 	if v := os.Getenv("PLUMEBOT_TEST_LLM_API_KEY"); v != "" {
-		cfg.LLM.OpenAI.APIKey = v
+		entry.APIKey = v
 	}
 	if v := os.Getenv("PLUMEBOT_TEST_LLM_MODEL"); v != "" {
-		cfg.LLM.OpenAI.Model = v
+		entry.Model = v
 	}
-	if cfg.LLM.OpenAI.Model == "" {
-		t.Fatal("未配置模型：config.yaml 的 llm.openai.model 或环境变量 PLUMEBOT_TEST_LLM_MODEL")
+	if entry.Model == "" {
+		t.Fatal("未配置模型：config.yaml 的 llm.models[chat].model 或环境变量 PLUMEBOT_TEST_LLM_MODEL")
 	}
 
 	// 生产链路组装（与 cmd/bot/main.go 一致）

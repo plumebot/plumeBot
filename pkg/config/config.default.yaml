@@ -24,14 +24,23 @@ middleware:
   sensitive_words: []      # 敏感词表；命中后回复「我拒绝回答」并丢弃，空数组 = 不过滤
 
 llm:
-  provider: openai              # 供应商：openai（OpenAI 兼容接口）；空 → openai
   timeout_seconds: 60           # 单次 LLM 调用超时（秒）；≤0 → 60
-  openai:
-    base_url: https://api.deepseek.com/v1   # OpenAI 兼容端点；空 → https://api.openai.com/v1
-    api_key: ""                # API Key；本地模型（如 Ollama）可留空
-    model: deepseek-chat       # 模型名；空 → 启动报错（不可猜测）
-    # temperature: 0.7         # 采样温度；缺省 → 不传（使用模型默认）
-    max_tokens: 0              # 最大输出 token 数；≤0 → 不传
+  native_multimodal: false      # 原生多模态模式（阶段3）；默认关，占位
+  models:                       # 模型条目数组；条目内 provider 为工厂选择键
+    - name: chat                # 用户取名；chat_model 引用
+      provider: openai          # 供应商：openai（OpenAI 兼容接口）；空 → openai
+      base_url: https://api.deepseek.com/v1   # OpenAI 兼容端点；空 → https://api.openai.com/v1
+      api_key: ""               # API Key；本地模型（如 Ollama）可留空
+      model: deepseek-chat      # 模型名；空 → 启动报错（不可猜测）
+      # temperature: 0.7        # 采样温度；缺省 → 不传（使用模型默认）
+      max_tokens: 0             # 最大输出 token 数；≤0 → 不传
+    # - name: vision            # 图片描述模型条目；启用视觉时在两处 yaml 同时添加并设 vision_model
+    #   provider: openai
+    #   base_url: ...
+    #   api_key: ""
+    #   model: qwen-vl-plus
+  chat_model: chat              # 对话模型条目引用；空 → models[0]
+  vision_model: ""              # 图片描述模型条目引用；空 = 描述关闭
 
 tools:
   enabled: [store_fact, learn_jargon, forget_fact]   # 启用的工具名列表（P3-004 记忆更新工具）；空 = 不注册任何工具

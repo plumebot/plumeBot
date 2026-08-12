@@ -39,7 +39,10 @@ func TestRegistryDispatch(t *testing.T) {
 		t.Fatalf("注册失败: %v", err)
 	}
 
-	cfg := config.Config{LLM: config.LLMConfig{Provider: "fake_b"}}
+	cfg := config.Config{LLM: config.LLMConfig{
+		Models:    []config.LLMModelConfig{{Name: "chat", Provider: "fake_b"}},
+		ChatModel: "chat",
+	}}
 	agent, err := r.NewAgent(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewAgent 失败: %v", err)
@@ -47,8 +50,9 @@ func TestRegistryDispatch(t *testing.T) {
 	if agent.(*stubAgent).Name() != "B" {
 		t.Errorf("分发的 agent = %q，期望 fake_b 的工厂产物", agent.(*stubAgent).Name())
 	}
-	if got.LLM.Provider != "fake_b" {
-		t.Errorf("工厂收到的 cfg.LLM.Provider = %q，期望原样透传", got.LLM.Provider)
+	entry, _ := got.LLM.ChatEntry()
+	if entry.Provider != "fake_b" {
+		t.Errorf("工厂收到的 chat 条目 provider = %q，期望原样透传", entry.Provider)
 	}
 }
 
@@ -58,7 +62,10 @@ func TestRegistryUnknownProvider(t *testing.T) {
 		t.Fatalf("注册失败: %v", err)
 	}
 
-	_, err := r.NewAgent(context.Background(), config.Config{LLM: config.LLMConfig{Provider: "nope"}})
+	_, err := r.NewAgent(context.Background(), config.Config{LLM: config.LLMConfig{
+		Models:    []config.LLMModelConfig{{Name: "chat", Provider: "nope"}},
+		ChatModel: "chat",
+	}})
 	if err == nil {
 		t.Fatal("未知 provider 应报错")
 	}
@@ -75,13 +82,25 @@ func TestRegistryEmptyProviderDefaults(t *testing.T) {
 		t.Fatalf("注册失败: %v", err)
 	}
 
-	cfg := config.Config{LLM: config.LLMConfig{Provider: ""}}
+	cfg := config.Config{LLM: config.LLMConfig{
+		Models:    []config.LLMModelConfig{{Name: "chat"}}, // provider 空
+		ChatModel: "chat",
+	}}
 	agent, err := r.NewAgent(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewAgent 失败: %v", err)
 	}
 	if agent.(*stubAgent).Name() != "O" {
 		t.Errorf("空 provider 应分发到 openai 工厂，实际 %q", agent.(*stubAgent).Name())
+	}
+}
+
+// chat_model 未指向任何条目 → 构造报错。
+func TestRegistryEmptyModels(t *testing.T) {
+	r := NewRegistry()
+	_, err := r.NewAgent(context.Background(), config.Config{}) // Models 为空
+	if err == nil || !strings.Contains(err.Error(), "llm.chat_model") {
+		t.Errorf("Models 为空应报错，实际 %v", err)
 	}
 }
 
@@ -100,15 +119,17 @@ func fullLLMCfg() config.Config {
 	temp := 0.7
 	return config.Config{
 		LLM: config.LLMConfig{
-			Provider:       "openai",
 			TimeoutSeconds: 30,
-			OpenAI: config.OpenAICompatConfig{
+			Models: []config.LLMModelConfig{{
+				Name:        "chat",
+				Provider:    "openai",
 				BaseURL:     "https://api.deepseek.com/v1",
 				APIKey:      "sk-test",
 				Model:       "deepseek-chat",
 				Temperature: &temp,
 				MaxTokens:   512,
-			},
+			}},
+			ChatModel: "chat",
 		},
 	}
 }
@@ -152,10 +173,10 @@ func TestOpenAIFactoryAgentMetaFallback(t *testing.T) {
 func TestOpenAIFactoryModelEmpty(t *testing.T) {
 	f := NewOpenAIFactory(NewToolsRegistry())
 	cfg := fullLLMCfg()
-	cfg.LLM.OpenAI.Model = ""
+	cfg.LLM.Models[0].Model = ""
 
 	_, err := f(context.Background(), cfg)
-	if err == nil || !strings.Contains(err.Error(), "llm.openai.model") {
+	if err == nil || !strings.Contains(err.Error(), "llm.models[chat].model") {
 		t.Errorf("model 空应报错并提示配置项，实际 %v", err)
 	}
 }
@@ -164,7 +185,7 @@ func TestOpenAIFactoryModelEmpty(t *testing.T) {
 func TestOpenAIFactoryBaseURLFallback(t *testing.T) {
 	f := NewOpenAIFactory(NewToolsRegistry())
 	cfg := fullLLMCfg()
-	cfg.LLM.OpenAI.BaseURL = ""
+	cfg.LLM.Models[0].BaseURL = ""
 
 	if _, err := f(context.Background(), cfg); err != nil {
 		t.Fatalf("base_url 空应兜底默认值，实际报错: %v", err)

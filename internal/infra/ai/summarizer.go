@@ -21,9 +21,13 @@ type EinoSummarizer struct {
 	cm model.BaseChatModel
 }
 
-// NewSummarizer 依据 LLM 配置构建摘要器（与对话 Agent 复用同一 buildChatModel 构造）。
+// NewSummarizer 依据对话模型条目构建摘要器（与对话 Agent 复用同一 buildModelFromEntry 构造）。
 func NewSummarizer(ctx context.Context, cfg config.Config) (domain.Summarizer, error) {
-	cm, err := buildChatModel(ctx, cfg)
+	entry, err := chatEntry(cfg)
+	if err != nil {
+		return nil, err
+	}
+	cm, err := buildModelFromEntry(ctx, entry, cfg.LLM.TimeoutSeconds)
 	if err != nil {
 		return nil, err
 	}

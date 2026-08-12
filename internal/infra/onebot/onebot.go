@@ -12,6 +12,7 @@ import (
 
 	"plumebot/internal/domain"
 	"plumebot/internal/handler"
+	"plumebot/internal/infra/imagecache"
 	"plumebot/pkg/config"
 	"plumebot/pkg/logger"
 )
@@ -19,19 +20,21 @@ import (
 // Client 是 ZeroBot 连接层的封装，负责连接 NapCat 并将事件分发给 handler。
 type Client struct {
 	cfg    config.OnebotConfig
+	cache  *imagecache.Cache // base64:// 图片入链闭合；nil = 关闭
 	msg    *handler.MessageHandler
 	notice *handler.NoticeHandler
 }
 
 // New 创建 Client，注入消息/通知事件处理入口。
 // logLevel 用于对齐 ZeroBot 内部 logrus 日志级别（debug|info|warn|error）。
+// cache 用于 base64:// 图片入链闭合（可为 nil 关闭）。
 // 空值兜底由本包负责：ws_url 为空时使用默认 NapCat 地址。
-func New(cfg config.OnebotConfig, logLevel string, msg *handler.MessageHandler, notice *handler.NoticeHandler) *Client {
+func New(cfg config.OnebotConfig, logLevel string, msg *handler.MessageHandler, notice *handler.NoticeHandler, cache *imagecache.Cache) *Client {
 	if cfg.WsURL == "" {
 		cfg.WsURL = config.DefaultWsURL
 	}
 	log.SetLevel(parseLogLevel(logLevel))
-	return &Client{cfg: cfg, msg: msg, notice: notice}
+	return &Client{cfg: cfg, cache: cache, msg: msg, notice: notice}
 }
 
 // Run 注册事件分发并启动连接。ZeroBot 底层自动处理断线重连，本方法阻塞运行，不返回。
@@ -54,7 +57,7 @@ const (
 // registerMatchers 注册 ZeroBot 事件匹配器：事件 → domain 实体 → handler。
 func (c *Client) registerMatchers() {
 	zero.OnMessage().Handle(func(ctx *zero.Ctx) {
-		msg, ok := toMessage(ctx.Event)
+		msg, ok := toMessage(ctx.Event, c.cache)
 		if !ok {
 			logger.Warn("忽略不支持的 message 事件",
 				logger.S("post_type", ctx.Event.PostType),

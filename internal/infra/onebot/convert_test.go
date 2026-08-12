@@ -1,6 +1,9 @@
 package onebot
 
 import (
+	"encoding/base64"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -8,6 +11,7 @@ import (
 	"github.com/wdvxdr1123/ZeroBot/message"
 
 	"plumebot/internal/domain/entity"
+	"plumebot/internal/infra/imagecache"
 )
 
 func TestFormatID(t *testing.T) {
@@ -42,15 +46,15 @@ func TestToMessageGroup(t *testing.T) {
 		Time:        1700000000,
 		Message:     message.Message{message.Text("你好呀")},
 	}
-	m, ok := toMessage(ev)
+	m, ok := toMessage(ev, nil)
 	if !ok {
 		t.Fatal("群聊消息应被接受")
 	}
 	if m.MessageID != "1001" || m.GroupID != "2002" || m.UserID != "3003" {
 		t.Errorf("ID 转换错误: %+v", m)
 	}
-	if m.Content != "你好呀" {
-		t.Errorf("Content = %q, want %q", m.Content, "你好呀")
+	if m.PlainText() != "你好呀" {
+		t.Errorf("PlainText = %q, want %q", m.PlainText(), "你好呀")
 	}
 	if m.Timestamp != 1700000000 || m.MessageType != "group" {
 		t.Errorf("Timestamp/MessageType 错误: %+v", m)
@@ -65,7 +69,7 @@ func TestToMessagePrivateGroupIDEmpty(t *testing.T) {
 		UserID:      int64(3003),
 		Message:     message.Message{message.Text("hi")},
 	}
-	m, ok := toMessage(ev)
+	m, ok := toMessage(ev, nil)
 	if !ok {
 		t.Fatal("私聊消息应被接受")
 	}
@@ -76,12 +80,130 @@ func TestToMessagePrivateGroupIDEmpty(t *testing.T) {
 
 func TestToMessageRejects(t *testing.T) {
 	// 非 message 事件
-	if _, ok := toMessage(&zero.Event{PostType: "notice"}); ok {
+	if _, ok := toMessage(&zero.Event{PostType: "notice"}, nil); ok {
 		t.Error("notice 事件不应被 toMessage 接受")
 	}
 	// 不支持的 message_type
-	if _, ok := toMessage(&zero.Event{PostType: "message", MessageType: "guild"}); ok {
+	if _, ok := toMessage(&zero.Event{PostType: "message", MessageType: "guild"}, nil); ok {
 		t.Error("guild 消息不应被接受")
+	}
+}
+
+// TestToParts 校验段数组 → Parts 映射（text/at/image/record/video/file + 丢弃段）。
+func TestToParts(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    message.Message
+		cache *imagecache.Cache // nil = base64 闭合关闭（旧行为）
+		want  []entity.ContentPart
+	}{
+		{
+			name: "纯文本",
+			in:   message.Message{message.Text("hi")},
+			want: []entity.ContentPart{{Type: entity.PartTypeText, Text: "hi"}},
+		},
+		{
+			name: "文本+@他人+图片",
+			in: message.Message{
+				message.Text("看看"),
+				message.At(12345),
+				// NapCat 收图时 url 字段在 data 中；message.Image() 只设 file，故显式构造。
+				message.Segment{Type: "image", Data: map[string]string{"url": "https://example.com/cat.png"}},
+			},
+			want: []entity.ContentPart{
+				{Type: entity.PartTypeText, Text: "看看"},
+				{Type: entity.PartTypeAt, Text: "[@12345]"},
+				{Type: entity.PartTypeImage, URL: "https://example.com/cat.png"},
+			},
+		},
+		{
+			name: "@全体",
+			in:   message.Message{message.AtAll()},
+			want: []entity.ContentPart{{Type: entity.PartTypeAt, Text: "[@全体]"}},
+		},
+		{
+			name: "语音/视频/文件段",
+			in: message.Message{
+				message.Segment{Type: "record", Data: map[string]string{"url": "http://x/a.amr"}},
+				message.Segment{Type: "video", Data: map[string]string{"url": "http://x/b.mp4"}},
+				message.Segment{Type: "file", Data: map[string]string{"url": "http://x/c.pdf"}},
+			},
+			want: []entity.ContentPart{
+				{Type: entity.PartTypeAudio, URL: "http://x/a.amr"},
+				{Type: entity.PartTypeVideo, URL: "http://x/b.mp4"},
+				{Type: entity.PartTypeFile, URL: "http://x/c.pdf"},
+			},
+		},
+		{
+			name:  "图片仅base64且无缓存时留空占位",
+			in:    message.Message{message.Image("base64://aGVsbG8=")},
+			cache: nil,
+			want:  []entity.ContentPart{{Type: entity.PartTypeImage, URL: ""}},
+		},
+		{
+			name: "丢弃回复与表情段",
+			in: message.Message{
+				message.Text("正文"),
+				message.Reply(999),
+				message.Face(178),
+			},
+			want: []entity.ContentPart{{Type: entity.PartTypeText, Text: "正文"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := toParts(tc.in, tc.cache)
+			if len(got) != len(tc.want) {
+				t.Fatalf("toParts 长度 = %d, want %d, got %+v", len(got), len(tc.want), got)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("toParts[%d] = %+v, want %+v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestToPartsBase64Closure 校验 base64:// 图片入链闭合：解码落盘 data/image_cache/<md5>，
+// URL 存本地路径（内容 = 解码字节），使 base64 图片可被描述。
+func TestToPartsBase64Closure(t *testing.T) {
+	cache := imagecache.New(t.TempDir())
+	parts := toParts(message.Message{message.Image("base64://aGVsbG8=")}, cache)
+	if len(parts) != 1 || parts[0].URL == "" {
+		t.Fatalf("base64 图片应落盘闭合 URL, 实际 %+v", parts)
+	}
+	if parts[0].Type != entity.PartTypeImage {
+		t.Errorf("应为 image part, 实际 %+v", parts[0])
+	}
+	data, err := os.ReadFile(parts[0].URL)
+	if err != nil {
+		t.Fatalf("读取缓存文件失败: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Errorf("缓存内容应为解码字节 hello, 实际 %q", data)
+	}
+}
+
+// TestToPartsBase64ClosurePlus 校验 base64 内容含 '+'（base64 字母表内常见字符）不被
+// URL 解码误当空格（QueryUnescape 的坑；实现用 PathUnescape 只解 %XX）。
+func TestToPartsBase64ClosurePlus(t *testing.T) {
+	cache := imagecache.New(t.TempDir())
+	b64 := base64.StdEncoding.EncodeToString([]byte{0xFB}) // 0xFB 的 base64 为 "+w=="，含 '+'
+	if !strings.Contains(b64, "+") {
+		t.Fatalf("测试数据应含 '+', 实际 %q", b64)
+	}
+
+	parts := toParts(message.Message{message.Image("base64://" + b64)}, cache)
+	if len(parts) != 1 || parts[0].URL == "" {
+		t.Fatalf("含 + 的 base64 应落盘闭合 URL, 实际 %+v", parts)
+	}
+	data, err := os.ReadFile(parts[0].URL)
+	if err != nil {
+		t.Fatalf("读取缓存文件失败: %v", err)
+	}
+	if len(data) != 1 || data[0] != 0xFB {
+		t.Errorf("缓存内容应为字节 0xFB, 实际 %x", data)
 	}
 }
 

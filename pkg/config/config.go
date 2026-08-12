@@ -18,9 +18,9 @@ import (
 var defaultConfigYAML []byte
 
 // EnvLLMAPIKey 是 LLM API key 的环境变量名。
-// 优先级高于 config.yaml 的 llm.openai.api_key：环境变量非空时覆盖文件值，
-// 便于将密钥放入启动脚本/系统环境而非配置文件，避免误提交。
-const EnvLLMAPIKey = "PLUMEBOT_LLM_OPENAI_API_KEY"
+// 优先级高于 config.yaml 中 chat_model 条目的 api_key：环境变量非空时覆盖文件值，
+// 便于将密钥放入启动脚本/系统环境而非配置文件，避免误提交。vision 条目密钥由文件提供。
+const EnvLLMAPIKey = "PLUMEBOT_API_KEY"
 
 // 默认值常量：供各消费包在字段为空时兜底，避免默认值字符串在多处漂移。
 const (
@@ -89,16 +89,24 @@ type RateLimitConfig struct {
 // LLMConfig 包含 LLM 接入配置（阶段 4 由 infra/ai 消费）。
 // 空值/非法值不做 Go 侧改写，由消费方按 §阶段 2.3 语义兜底。
 type LLMConfig struct {
-	// Provider 供应商名，本期仅支持 openai（任意 OpenAI 兼容接口）；空 → DefaultLLMProvider。
-	Provider string `mapstructure:"provider"`
 	// TimeoutSeconds 单次 LLM 调用超时（秒）；≤0 → DefaultLLMTimeoutSeconds。
 	TimeoutSeconds int `mapstructure:"timeout_seconds"`
-	// OpenAI OpenAI 兼容接口的端点配置。
-	OpenAI OpenAICompatConfig `mapstructure:"openai"`
+	// NativeMultimodal 原生多模态模式（阶段 3 占位，默认关，本轮无消费者）。
+	NativeMultimodal bool `mapstructure:"native_multimodal"`
+	// Models 模型条目数组，条目内 Provider 为工厂选择键（当前仅 openai 兼容工厂）。
+	Models []LLMModelConfig `mapstructure:"models"`
+	// ChatModel 引用 Models[].name 指定对话模型；空 → models[0]（消费方兜底）。
+	ChatModel string `mapstructure:"chat_model"`
+	// VisionModel 引用 Models[].name 指定图片描述模型；空 = 描述关闭。
+	VisionModel string `mapstructure:"vision_model"`
 }
 
-// OpenAICompatConfig 是 OpenAI 兼容接口的端点配置。
-type OpenAICompatConfig struct {
+// LLMModelConfig 是单个模型条目的端点配置（OpenAI 兼容接口）。
+type LLMModelConfig struct {
+	// Name 用户取名，供 chat_model / vision_model 引用（非硬编码角色）。
+	Name string `mapstructure:"name"`
+	// Provider 供应商名（工厂选择键），本期仅支持 openai（任意 OpenAI 兼容接口）；空 → DefaultLLMProvider。
+	Provider string `mapstructure:"provider"`
 	// BaseURL 兼容端点（如 https://api.deepseek.com/v1）；空 → DefaultOpenAIBaseURL。
 	BaseURL string `mapstructure:"base_url"`
 	// APIKey 密钥；本地模型（如 Ollama）可留空，透传不设。
@@ -109,6 +117,36 @@ type OpenAICompatConfig struct {
 	Temperature *float64 `mapstructure:"temperature"`
 	// MaxTokens 最大输出 token 数；≤0 → 不传该参数。
 	MaxTokens int `mapstructure:"max_tokens"`
+}
+
+// ByName 按 name 查找模型条目；name 为空返回 models[0]。
+// 未命中返回 ok=false。只读解析助手，不改写字段（「chat_model 空→models[0]」策略唯一实现点）。
+func (c LLMConfig) ByName(name string) (LLMModelConfig, bool) {
+	if name == "" {
+		if len(c.Models) == 0 {
+			return LLMModelConfig{}, false
+		}
+		return c.Models[0], true
+	}
+	for _, m := range c.Models {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	return LLMModelConfig{}, false
+}
+
+// ChatEntry 返回对话模型条目：ChatModel 引用 name，空 → models[0]。
+func (c LLMConfig) ChatEntry() (LLMModelConfig, bool) {
+	return c.ByName(c.ChatModel)
+}
+
+// VisionEntry 返回视觉模型条目：VisionModel 引用 name；空 → (零值, false)（描述关闭）。
+func (c LLMConfig) VisionEntry() (LLMModelConfig, bool) {
+	if c.VisionModel == "" {
+		return LLMModelConfig{}, false
+	}
+	return c.ByName(c.VisionModel)
 }
 
 // ToolsConfig 包含工具（function calling）配置。
@@ -132,8 +170,8 @@ type AgentConfig struct {
 // Load 从 path 加载 YAML 配置文件。
 // 配置文件不存在时，将嵌入的默认配置（config.default.yaml）写入 path 后再加载。
 // 字段空值/缺省不做 Go 侧兜底，由各消费包自行处理默认值。
-// 唯一例外：llm.openai.api_key 支持环境变量 EnvLLMAPIKey 覆盖（非空时优先于文件值，
-// 敏感密钥不入配置文件）。
+// 唯一例外：chat_model 条目的 api_key 支持环境变量 EnvLLMAPIKey 覆盖（非空时优先于文件值，
+// 敏感密钥不入配置文件；vision 条目密钥由文件提供）。
 func Load(path string) (*Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := writeDefault(path); err != nil {
@@ -153,8 +191,16 @@ func Load(path string) (*Config, error) {
 	}
 
 	// 敏感字段环境变量覆盖：仅当环境变量非空时生效，空值保留文件配置。
+	// 数组化后限定作用于 chat_model 条目（vision 条目密钥由文件提供）。
 	if key := os.Getenv(EnvLLMAPIKey); key != "" {
-		cfg.LLM.OpenAI.APIKey = key
+		if entry, ok := cfg.LLM.ChatEntry(); ok {
+			for i := range cfg.LLM.Models {
+				if cfg.LLM.Models[i].Name == entry.Name {
+					cfg.LLM.Models[i].APIKey = key
+					break
+				}
+			}
+		}
 	}
 
 	return &cfg, nil

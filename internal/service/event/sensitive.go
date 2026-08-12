@@ -25,7 +25,7 @@ func newSensitiveWordFilter(words []string) *sensitiveWordFilter {
 func sensitiveWordMiddleware(filter *sensitiveWordFilter) Middleware {
 	return func(next Handler) Handler {
 		return func(ctx context.Context, msg entity.Message) error {
-			word, ok := filter.matcher.Find(msg.Content)
+			word, ok := filter.matcher.Find(msg.PlainText())
 			if !ok {
 				return next(ctx, msg)
 			}

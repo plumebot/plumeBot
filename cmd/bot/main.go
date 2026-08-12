@@ -11,6 +11,7 @@ import (
 	"plumebot/internal/handler"
 	"plumebot/internal/infra/ai"
 	"plumebot/internal/infra/ai/tools"
+	"plumebot/internal/infra/imagecache"
 	"plumebot/internal/infra/onebot"
 	"plumebot/internal/infra/plugin_exe"
 	"plumebot/internal/infra/sqlite"
@@ -44,11 +45,15 @@ func main() {
 	if err := llmRegistry.Register(config.DefaultLLMProvider, ai.NewOpenAIFactory(toolsRegistry)); err != nil {
 		logger.Fatal("注册 LLM provider 失败", logger.Err(err))
 	}
-	storageInfra, err := sqlite.Open("data")
+	// 数据根目录：SQLite 库 + base64:// 图片缓存（data/image_cache/）共用。
+	dataDir := "data"
+	storageInfra, err := sqlite.Open(dataDir)
 	if err != nil {
 		logger.Fatal("打开 SQLite 失败", logger.Err(err))
 	}
 	defer storageInfra.Close()
+	// base64:// 入链图片缓存：内容级去重落盘，URL 存路径闭合（base64 不入库原则）。
+	imgCache := imagecache.New(dataDir)
 
 	// P3-004 记忆更新工具：Agent 对话中经 tool calling 写 SQLite（事实/黑话）。
 	// 会话身份（群/用户）由 P6-002 消息管线经 ctx 注入，工具经 entity.SessionFrom 读取。
@@ -97,6 +102,15 @@ func main() {
 	if err != nil {
 		logger.Fatal("初始化摘要器失败", logger.Err(err))
 	}
+	// 阶段2 图片描述器：vision_model 配置时启用，P6 装配经 BuildContext 惰性调用；
+	// vision_model 为空 → 描述关闭（nil），图片只落 [图片] 占位。
+	var describerInfra domain.MediaDescriber
+	if _, ok := cfg.LLM.VisionEntry(); ok {
+		describerInfra, err = ai.NewMediaDescriber(ctx, *cfg)
+		if err != nil {
+			logger.Fatal("初始化图片描述器失败", logger.Err(err))
+		}
+	}
 	// P4-002 插件系统：go-plugin 子进程（stdio）。service/plugin 经注入的工厂拉起插件进程，
 	// 避免 service 直接依赖 infra。协议见架构 §8.6：只定义协议 + 宿主校验，不执行回复/动作。
 	pluginSvc := plugin.NewPluginService(func(exePath string) (plugin.PluginClient, error) {
@@ -109,7 +123,7 @@ func main() {
 
 	// 3. 注入 service
 	agentSvc := agent.NewAgentService(agentInfra)
-	memorySvc := memory.NewMemoryService(memory.NewWindow(), storageInfra, summarizerInfra)
+	memorySvc := memory.NewMemoryService(memory.NewWindow(), storageInfra, summarizerInfra, describerInfra)
 	controlSvc := control.NewControlService(control.Nop())
 	eventSvc := event.NewEventService(agentSvc, memorySvc, pluginSvc, controlSvc, cfg.Middleware)
 
@@ -118,36 +132,38 @@ func main() {
 	noticeHandler := handler.NewNoticeHandler(eventSvc)
 
 	// 5. 启动 onebot 连接（阻塞，ZeroBot 底层自动重连）
-	client := onebot.New(cfg.Onebot, cfg.Log.Level, msgHandler, noticeHandler)
+	client := onebot.New(cfg.Onebot, cfg.Log.Level, msgHandler, noticeHandler, imgCache)
 	if cfg.Bot.Name == "" {
 		cfg.Bot.Name = config.DefaultBotName // 展示用兜底
 	}
 	if cfg.Onebot.WsURL == "" {
 		cfg.Onebot.WsURL = config.DefaultWsURL // 与 onebot.New 内部兜底保持一致，保证日志显示真实连接地址
 	}
+	chat, _ := cfg.LLM.ChatEntry() // 已由 NewAgent 校验过非空；兜底空条目避免日志 panic
 	logger.Info("PlumeBot 启动，正在连接 NapCat",
 		logger.S("name", cfg.Bot.Name),
 		logger.S("ws_url", cfg.Onebot.WsURL),
-		logger.S("llm_provider", llmProviderName(cfg)),
-		logger.S("llm_model", cfg.LLM.OpenAI.Model),
-		logger.S("llm_base_url", llmBaseURL(cfg)),
-		logger.S("llm_api_key_set", strconv.FormatBool(cfg.LLM.OpenAI.APIKey != "")), // 只标记是否配置，绝不打印密钥本身
+		logger.S("llm_provider", entryProvider(chat)),
+		logger.S("llm_model", chat.Model),
+		logger.S("llm_base_url", entryBaseURL(chat)),
+		logger.S("llm_api_key_set", strconv.FormatBool(chat.APIKey != "")), // 只标记是否配置，绝不打印密钥本身
+		logger.S("vision_model", cfg.LLM.VisionModel),
 	)
 	client.Run()
 }
 
-// llmProviderName 返回实际生效的 provider 名（与 Registry.NewAgent 的兜底一致）。
-func llmProviderName(cfg *config.Config) string {
-	if cfg.LLM.Provider == "" {
+// entryProvider 返回条目实际生效的 provider 名（与 Registry.NewAgent 的兜底一致）。
+func entryProvider(e config.LLMModelConfig) string {
+	if e.Provider == "" {
 		return config.DefaultLLMProvider
 	}
-	return cfg.LLM.Provider
+	return e.Provider
 }
 
-// llmBaseURL 返回实际生效的 base_url（与 openai 工厂的兜底一致，保证日志显示真实端点）。
-func llmBaseURL(cfg *config.Config) string {
-	if cfg.LLM.OpenAI.BaseURL == "" {
+// entryBaseURL 返回条目实际生效的 base_url（与 openai 工厂的兜底一致，保证日志显示真实端点）。
+func entryBaseURL(e config.LLMModelConfig) string {
+	if e.BaseURL == "" {
 		return config.DefaultOpenAIBaseURL
 	}
-	return cfg.LLM.OpenAI.BaseURL
+	return e.BaseURL
 }

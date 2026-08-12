@@ -121,3 +121,58 @@ func TestGetPersonaByAgent(t *testing.T) {
 		t.Errorf("应返回 ErrNotFound, 实际: %v", err)
 	}
 }
+
+// TestMessagesRoundTrip 校验 messages 表 Parts 序列化/反序列化往返（多段 + 空段）。
+func TestMessagesRoundTrip(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("打开测试数据库失败: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	msg := entity.Message{
+		MessageID: "m1",
+		GroupID:   "g1",
+		UserID:    "u1",
+		Parts: []entity.ContentPart{
+			{Type: entity.PartTypeText, Text: "看看"},
+			{Type: entity.PartTypeAt, Text: "[@123]"},
+			{Type: entity.PartTypeImage, URL: "https://example.com/cat.png"},
+		},
+		Timestamp:   1700000000,
+		MessageType: "group",
+	}
+	if err := s.SaveMessage(ctx, msg); err != nil {
+		t.Fatalf("SaveMessage 失败: %v", err)
+	}
+
+	got, err := s.GetMessages(ctx, "g1", 10, 0)
+	if err != nil {
+		t.Fatalf("GetMessages 失败: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("应返回 1 条, 实际 %d", len(got))
+	}
+	if got[0].MessageID != "m1" || got[0].GroupID != "g1" || got[0].UserID != "u1" ||
+		got[0].Timestamp != 1700000000 || got[0].MessageType != "group" {
+		t.Errorf("消息元数据不符: %+v", got[0])
+	}
+	if len(got[0].Parts) != 3 || got[0].Parts[0] != msg.Parts[0] ||
+		got[0].Parts[1] != msg.Parts[1] || got[0].Parts[2] != msg.Parts[2] {
+		t.Errorf("Parts 往返不符: %+v", got[0].Parts)
+	}
+
+	// 空 Parts → 存 "[]"，读回空切片（非 nil）。
+	if err := s.SaveMessage(ctx, entity.Message{MessageID: "m2", GroupID: "g1", UserID: "u1", MessageType: "group"}); err != nil {
+		t.Fatalf("SaveMessage 空 Parts 失败: %v", err)
+	}
+	got2, _ := s.GetMessages(ctx, "g1", 10, 0)
+	if len(got2) != 2 {
+		t.Fatalf("应返回 2 条, 实际 %d", len(got2))
+	}
+	// 时间倒序：m1(timestamp=1700000000) 在前，m2(timestamp=0) 在后。
+	if got2[1].Parts == nil || len(got2[1].Parts) != 0 {
+		t.Errorf("空 Parts 应读回空切片, 实际: %#v", got2[1].Parts)
+	}
+}

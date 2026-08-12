@@ -46,14 +46,17 @@ func TestEinoSummarizerPropagatesError(t *testing.T) {
 	}
 }
 
-// NewSummarizer 构造：model 空 → 报错（不可猜测）；model 配置 → 返回可用摘要器。
+// NewSummarizer 构造：chat 条目缺失 / model 空 → 报错；model 配置 → 返回可用摘要器。
 func TestNewSummarizerConfig(t *testing.T) {
 	if _, err := NewSummarizer(context.Background(), config.Config{}); err == nil {
-		t.Error("model 为空时应报错")
+		t.Error("models 为空时应报错")
 	}
 
 	cfg := config.Config{
-		LLM: config.LLMConfig{OpenAI: config.OpenAICompatConfig{Model: "test-model"}},
+		LLM: config.LLMConfig{
+			Models:    []config.LLMModelConfig{{Name: "chat", Model: "test-model"}},
+			ChatModel: "chat",
+		},
 	}
 	sum, err := NewSummarizer(context.Background(), cfg)
 	if err != nil {

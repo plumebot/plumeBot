@@ -96,10 +96,10 @@ func (s *Storage) migrate(ctx context.Context) error {
 
 // ──────────────────────────── messages ────────────────────────────
 
-// SaveMessage 保存一条聊天消息到 messages 表。
+// SaveMessage 保存一条聊天消息到 messages 表（Parts 序列化为 JSON）。
 func (s *Storage) SaveMessage(ctx context.Context, msg entity.Message) error {
 	_, err := s.db.ExecContext(ctx, sqlSaveMessage,
-		msg.MessageID, msg.GroupID, msg.UserID, msg.Content, msg.Timestamp, msg.MessageType)
+		msg.MessageID, msg.GroupID, msg.UserID, marshalParts(msg.Parts), msg.Timestamp, msg.MessageType)
 	return err
 }
 
@@ -114,12 +114,26 @@ func (s *Storage) GetMessages(ctx context.Context, groupID string, limit, offset
 	var out []entity.Message
 	for rows.Next() {
 		var m entity.Message
-		if err := rows.Scan(&m.MessageID, &m.GroupID, &m.UserID, &m.Content, &m.Timestamp, &m.MessageType); err != nil {
+		var parts string
+		if err := rows.Scan(&m.MessageID, &m.GroupID, &m.UserID, &parts, &m.Timestamp, &m.MessageType); err != nil {
 			return nil, err
 		}
+		json.Unmarshal([]byte(parts), &m.Parts)
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// marshalParts 将内容段序列化为 JSON；空段返回 "[]"（避免 null）。
+func marshalParts(parts []entity.ContentPart) string {
+	if len(parts) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(parts)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // ──────────────────────────── conversation_summary ────────────────────────────

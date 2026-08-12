@@ -31,7 +31,7 @@ func parseCommand(content string) (cmd string, args []string, ok bool) {
 // 路由到插件执行，校验通过后记录指令集摘要。P4-002 只定义协议 + 校验，不执行回复/动作
 // （发送归 P6-002 B-003，群管理归 B-015）。
 func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) error {
-	cmd, args, ok := parseCommand(msg.Content)
+	cmd, args, ok := parseCommand(msg.PlainText())
 	if !ok {
 		return nil
 	}

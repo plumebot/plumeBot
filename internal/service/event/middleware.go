@@ -33,7 +33,7 @@ func logMiddleware(next Handler) Handler {
 			logger.S("group_id", msg.GroupID),
 			logger.S("user_id", msg.UserID),
 			logger.S("message_type", msg.MessageType),
-			logger.S("content", msg.Content),
+			logger.S("content", msg.Render()),
 		)
 		return next(ctx, msg)
 	}

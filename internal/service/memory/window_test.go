@@ -9,7 +9,12 @@ import (
 )
 
 func groupMsg(groupID, content string) entity.Message {
-	return entity.Message{GroupID: groupID, MessageType: "group", Content: content}
+	return entity.Message{GroupID: groupID, MessageType: "group", Parts: textParts(content)}
+}
+
+// textParts 构造单文本内容段。
+func textParts(content string) []entity.ContentPart {
+	return []entity.ContentPart{{Type: entity.PartTypeText, Text: content}}
 }
 
 func TestWindowAppendAndGet(t *testing.T) {
@@ -25,7 +30,7 @@ func TestWindowAppendAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取窗口失败: %v", err)
 	}
-	if len(got) != 1 || got[0].Content != "hi" {
+	if len(got) != 1 || got[0].PlainText() != "hi" {
 		t.Errorf("窗口内容错误: %+v", got)
 	}
 }
@@ -37,10 +42,10 @@ func TestWindowPerGroupIsolation(t *testing.T) {
 
 	g1, _ := w.GetWindow(context.Background(), "g1")
 	g2, _ := w.GetWindow(context.Background(), "g2")
-	if len(g1) != 1 || g1[0].Content != "a" {
+	if len(g1) != 1 || g1[0].PlainText() != "a" {
 		t.Errorf("g1 窗口错误: %+v", g1)
 	}
-	if len(g2) != 1 || g2[0].Content != "b" {
+	if len(g2) != 1 || g2[0].PlainText() != "b" {
 		t.Errorf("g2 窗口错误: %+v", g2)
 	}
 }
@@ -48,15 +53,15 @@ func TestWindowPerGroupIsolation(t *testing.T) {
 func TestWindowPrivateSessionKeyIsolated(t *testing.T) {
 	w := NewWindow()
 	// 私聊消息 GroupID 为空，按用户隔离，避免互相串窗。
-	w.AppendMessage(context.Background(), entity.Message{UserID: "u1", MessageType: "private", Content: "a"})
-	w.AppendMessage(context.Background(), entity.Message{UserID: "u2", MessageType: "private", Content: "b"})
+	w.AppendMessage(context.Background(), entity.Message{UserID: "u1", MessageType: "private", Parts: textParts("a")})
+	w.AppendMessage(context.Background(), entity.Message{UserID: "u2", MessageType: "private", Parts: textParts("b")})
 
 	u1, _ := w.GetWindow(context.Background(), "private:u1")
 	u2, _ := w.GetWindow(context.Background(), "private:u2")
-	if len(u1) != 1 || u1[0].Content != "a" {
+	if len(u1) != 1 || u1[0].PlainText() != "a" {
 		t.Errorf("u1 私聊窗口错误: %+v", u1)
 	}
-	if len(u2) != 1 || u2[0].Content != "b" {
+	if len(u2) != 1 || u2[0].PlainText() != "b" {
 		t.Errorf("u2 私聊窗口错误: %+v", u2)
 	}
 }
@@ -100,9 +105,9 @@ func TestWindowGetWindowReturnsCopy(t *testing.T) {
 	w.AppendMessage(context.Background(), groupMsg("g1", "a"))
 
 	got, _ := w.GetWindow(context.Background(), "g1")
-	got[0].Content = "mutated"
+	got[0].Parts = textParts("mutated")
 	again, _ := w.GetWindow(context.Background(), "g1")
-	if again[0].Content != "a" {
+	if again[0].PlainText() != "a" {
 		t.Error("GetWindow 应返回副本，外部修改不应影响窗口内部数据")
 	}
 }

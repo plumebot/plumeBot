@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS messages (
     message_id  TEXT    NOT NULL,                -- OneBot 消息唯一 ID
     group_id    TEXT    NOT NULL DEFAULT '',     -- 群 ID，私聊时为空
     user_id     TEXT    NOT NULL,                -- 发送者 QQ 号
-    content     TEXT    NOT NULL DEFAULT '',     -- 消息文本
+    parts       TEXT    NOT NULL DEFAULT '[]',   -- 消息内容段（JSON：text/at/image/audio/video/file）
     timestamp   INTEGER NOT NULL DEFAULT 0,     -- Unix 时间戳（秒）
     message_type TEXT   NOT NULL DEFAULT 'group' -- group / private
 );

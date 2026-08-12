@@ -105,7 +105,7 @@ func TestPersistMessageWritesWindowAndStorage(t *testing.T) {
 	if full {
 		t.Error("首条消息不应触发压缩")
 	}
-	if len(store.saved) != 1 || store.saved[0].Content != "hi" {
+	if len(store.saved) != 1 || store.saved[0].PlainText() != "hi" {
 		t.Errorf("SQLite 未收到消息: %+v", store.saved)
 	}
 	got, _ := svc.GetWindow(context.Background(), "g1")

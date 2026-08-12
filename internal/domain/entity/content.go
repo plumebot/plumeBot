@@ -18,16 +18,21 @@ const (
 	PartTypeAudio PartType = "audio"
 	PartTypeVideo PartType = "video"
 	PartTypeFile  PartType = "file"
+	// PartTypeAt 是 @ 标记（入站专用：@某人/@全体）。不直接进 LLM，组装时转文本（见 service 层）。
+	PartTypeAt PartType = "at"
 )
 
-// ContentPart 是 ChatMessage 的一个内容片段。
+// ContentPart 是一个内容片段（入站 Message 段与出站 ChatMessage 通用）。
 // URL 与 Base64 二选一（按 Type 决定语义）；MIMEType 用于图片等二进制片段（如 image/png）。
+// Description 是多模态片段的 LLM 文本描述：空 = 未生成（阶段 2 惰性填充）。
+// 持久化规则：base64 不落库，仅 URL / 文本 / 描述落库。
 type ContentPart struct {
-	Type     PartType
-	Text     string // Type == PartTypeText 时的文本内容
-	URL      string // 远程资源地址（如图片 URL）
-	Base64   string // 二进制内容（base64 编码）
-	MIMEType string // 二进制片段媒体类型
+	Type        PartType `json:"type"`
+	Text        string   `json:"text,omitempty"`        // Type==text 时的文本；Type==at 时为 "[@qq]"/"[@全体]"
+	URL         string   `json:"url,omitempty"`         // 远程资源地址（如图片 URL）；可空（占位）
+	Base64      string   `json:"base64,omitempty"`      // 二进制内容（base64 编码）；瞬时传递，不持久化
+	MIMEType    string   `json:"mime_type,omitempty"`   // 二进制片段媒体类型（如 image/png）
+	Description string   `json:"description,omitempty"` // 多模态的 LLM 文本描述；空 = 未生成
 }
 
 // ChatMessage 是传给 LLM 的一条会话消息（多模态：Parts 可含文本、图片等片段）。

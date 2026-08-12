@@ -12,7 +12,7 @@ import (
 // contentMsg 构造带文本内容的消息（groupMsg 的首参是 MessageID）。
 func contentMsg(content string) entity.Message {
 	m := groupMsg("m1")
-	m.Content = content
+	m.Parts = []entity.ContentPart{{Type: entity.PartTypeText, Text: content}}
 	return m
 }
 

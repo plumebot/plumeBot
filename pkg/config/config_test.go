@@ -61,7 +61,7 @@ func TestLoadExistingFileNoFallback(t *testing.T) {
 		"bot:\n  name: \"\"\n"+
 			"onebot:\n  ws_url: \"\"\n"+
 			"middleware:\n  rate_limit:\n    rate: 0\n    burst: 0\n    max_wait_seconds: 0\n"+
-			"llm:\n  provider: \"\"\n  timeout_seconds: 0\n  openai:\n    base_url: \"\"\n    model: \"\"\n    max_tokens: 0\n"+
+			"llm:\n  timeout_seconds: 0\n  models:\n    - name: \"\"\n      provider: \"\"\n      base_url: \"\"\n      model: \"\"\n      max_tokens: 0\n  chat_model: \"\"\n  vision_model: \"\"\n"+
 			"agent:\n  name: \"\"\n  description: \"\"\n  system_prompt: \"\"\n")
 
 	cfg, err := Load(path)
@@ -85,14 +85,15 @@ func TestLoadExistingFileNoFallback(t *testing.T) {
 		t.Errorf("MaxWaitSeconds 零值不应被改写，实际 %v", got)
 	}
 	// LLM/Tools/Agent 空值同样不做 Go 侧改写
-	if cfg.LLM.Provider != "" {
-		t.Errorf("LLM.Provider 空值不应被改写，实际 %q", cfg.LLM.Provider)
-	}
 	if cfg.LLM.TimeoutSeconds != 0 {
 		t.Errorf("LLM.TimeoutSeconds 零值不应被改写，实际 %v", cfg.LLM.TimeoutSeconds)
 	}
-	if cfg.LLM.OpenAI.BaseURL != "" || cfg.LLM.OpenAI.Model != "" || cfg.LLM.OpenAI.MaxTokens != 0 {
-		t.Errorf("LLM.OpenAI 空值不应被改写，实际 %+v", cfg.LLM.OpenAI)
+	if len(cfg.LLM.Models) != 1 || cfg.LLM.Models[0].BaseURL != "" ||
+		cfg.LLM.Models[0].Model != "" || cfg.LLM.Models[0].MaxTokens != 0 {
+		t.Errorf("LLM.Models 空值不应被改写，实际 %+v", cfg.LLM.Models)
+	}
+	if cfg.LLM.ChatModel != "" || cfg.LLM.VisionModel != "" {
+		t.Errorf("ChatModel/VisionModel 空值不应被改写，实际 %q/%q", cfg.LLM.ChatModel, cfg.LLM.VisionModel)
 	}
 	if cfg.Agent.Name != "" || cfg.Agent.Description != "" || cfg.Agent.SystemPrompt != "" {
 		t.Errorf("Agent 空值不应被改写，实际 %+v", cfg.Agent)
@@ -131,14 +132,22 @@ func TestLoadLLMToolsAgentValues(t *testing.T) {
 
 	path := writeTempConfig(t,
 		"llm:\n"+
-			"  provider: openai\n"+
 			"  timeout_seconds: 30\n"+
-			"  openai:\n"+
-			"    base_url: https://api.deepseek.com/v1\n"+
-			"    api_key: sk-test-123\n"+
-			"    model: deepseek-chat\n"+
-			"    temperature: 0.7\n"+
-			"    max_tokens: 512\n"+
+			"  models:\n"+
+			"    - name: chat\n"+
+			"      provider: openai\n"+
+			"      base_url: https://api.deepseek.com/v1\n"+
+			"      api_key: sk-test-123\n"+
+			"      model: deepseek-chat\n"+
+			"      temperature: 0.7\n"+
+			"      max_tokens: 512\n"+
+			"    - name: vision\n"+
+			"      provider: openai\n"+
+			"      base_url: https://api.vision.com/v1\n"+
+			"      api_key: sk-vision\n"+
+			"      model: qwen-vl-plus\n"+
+			"  chat_model: chat\n"+
+			"  vision_model: vision\n"+
 			"tools:\n"+
 			"  enabled:\n"+
 			"    - tool_a\n"+
@@ -153,30 +162,26 @@ func TestLoadLLMToolsAgentValues(t *testing.T) {
 		t.Fatalf("加载配置失败: %v", err)
 	}
 
-	if cfg.LLM.Provider != "openai" {
-		t.Errorf("LLM.Provider = %q，期望 openai", cfg.LLM.Provider)
-	}
 	if cfg.LLM.TimeoutSeconds != 30 {
 		t.Errorf("LLM.TimeoutSeconds = %v，期望 30", cfg.LLM.TimeoutSeconds)
 	}
-	o := cfg.LLM.OpenAI
-	if o.BaseURL != "https://api.deepseek.com/v1" {
-		t.Errorf("OpenAI.BaseURL = %q", o.BaseURL)
+	chat, ok := cfg.LLM.ChatEntry()
+	if !ok || chat.BaseURL != "https://api.deepseek.com/v1" || chat.APIKey != "sk-test-123" ||
+		chat.Model != "deepseek-chat" {
+		t.Fatalf("chat 条目解析不符: %+v ok=%v", chat, ok)
 	}
-	if o.APIKey != "sk-test-123" {
-		t.Errorf("OpenAI.APIKey = %q", o.APIKey)
+	if chat.Temperature == nil {
+		t.Fatal("chat.Temperature 应为指针（已配置 0.7）")
 	}
-	if o.Model != "deepseek-chat" {
-		t.Errorf("OpenAI.Model = %q", o.Model)
+	if *chat.Temperature != 0.7 {
+		t.Errorf("chat.Temperature = %v，期望 0.7", *chat.Temperature)
 	}
-	if o.Temperature == nil {
-		t.Fatal("Temperature 应为指针（已配置 0.7）")
+	if chat.MaxTokens != 512 {
+		t.Errorf("chat.MaxTokens = %v，期望 512", chat.MaxTokens)
 	}
-	if *o.Temperature != 0.7 {
-		t.Errorf("Temperature = %v，期望 0.7", *o.Temperature)
-	}
-	if o.MaxTokens != 512 {
-		t.Errorf("OpenAI.MaxTokens = %v，期望 512", o.MaxTokens)
+	vision, ok := cfg.LLM.VisionEntry()
+	if !ok || vision.APIKey != "sk-vision" || vision.Model != "qwen-vl-plus" {
+		t.Errorf("vision 条目解析不符: %+v ok=%v", vision, ok)
 	}
 	if len(cfg.Tools.Enabled) != 2 || cfg.Tools.Enabled[0] != "tool_a" || cfg.Tools.Enabled[1] != "tool_b" {
 		t.Errorf("Tools.Enabled = %v，期望 [tool_a tool_b]", cfg.Tools.Enabled)
@@ -192,47 +197,55 @@ func TestLoadLLMToolsAgentValues(t *testing.T) {
 	}
 }
 
-// 环境变量 EnvLLMAPIKey 非空时覆盖文件中的 api_key（敏感密钥不入配置文件）。
+// 环境变量 EnvLLMAPIKey 非空时覆盖文件中的 chat 条目 api_key（敏感密钥不入配置文件）；
+// vision 条目密钥不受影响（由文件提供）。
 func TestLoadEnvAPIKeyOverrides(t *testing.T) {
 	path := writeTempConfig(t,
-		"llm:\n  provider: openai\n  openai:\n    api_key: sk-file\n    model: some-model\n")
+		"llm:\n  models:\n    - name: chat\n      api_key: sk-file\n      model: some-model\n    - name: vision\n      api_key: sk-vision\n      model: qwen-vl-plus\n  chat_model: chat\n  vision_model: vision\n")
 	t.Setenv(EnvLLMAPIKey, "sk-env")
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("加载配置失败: %v", err)
 	}
-	if cfg.LLM.OpenAI.APIKey != "sk-env" {
-		t.Errorf("APIKey = %q，期望环境变量值 sk-env", cfg.LLM.OpenAI.APIKey)
+	chat, _ := cfg.LLM.ChatEntry()
+	if chat.APIKey != "sk-env" {
+		t.Errorf("chat 条目 APIKey = %q，期望环境变量值 sk-env", chat.APIKey)
+	}
+	vision, _ := cfg.LLM.VisionEntry()
+	if vision.APIKey != "sk-vision" {
+		t.Errorf("vision 条目 APIKey = %q，应保留文件值 sk-vision（env 仅作用于 chat 条目）", vision.APIKey)
 	}
 }
 
 // 环境变量为空时视为未设置，保留文件中的 api_key。
 func TestLoadEnvAPIKeyEmptyKeepsFile(t *testing.T) {
 	path := writeTempConfig(t,
-		"llm:\n  provider: openai\n  openai:\n    api_key: sk-file\n    model: some-model\n")
+		"llm:\n  models:\n    - name: chat\n      api_key: sk-file\n      model: some-model\n  chat_model: chat\n")
 	t.Setenv(EnvLLMAPIKey, "")
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("加载配置失败: %v", err)
 	}
-	if cfg.LLM.OpenAI.APIKey != "sk-file" {
-		t.Errorf("APIKey = %q，期望保留文件值 sk-file", cfg.LLM.OpenAI.APIKey)
+	chat, _ := cfg.LLM.ChatEntry()
+	if chat.APIKey != "sk-file" {
+		t.Errorf("chat 条目 APIKey = %q，期望保留文件值 sk-file", chat.APIKey)
 	}
 }
 
 // temperature 缺省时指针应为 nil（消费方据此不传该参数）。
 func TestLoadTemperatureNilWhenAbsent(t *testing.T) {
 	path := writeTempConfig(t,
-		"llm:\n  provider: openai\n  openai:\n    model: some-model\n")
+		"llm:\n  models:\n    - name: chat\n      model: some-model\n  chat_model: chat\n")
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("加载配置失败: %v", err)
 	}
-	if cfg.LLM.OpenAI.Temperature != nil {
-		t.Errorf("Temperature 缺省应为 nil，实际 %v", *cfg.LLM.OpenAI.Temperature)
+	chat, _ := cfg.LLM.ChatEntry()
+	if chat.Temperature != nil {
+		t.Errorf("Temperature 缺省应为 nil，实际 %v", *chat.Temperature)
 	}
 }
 
@@ -240,20 +253,20 @@ func TestLoadTemperatureNilWhenAbsent(t *testing.T) {
 func TestLoadUnknownFieldsIgnored(t *testing.T) {
 	path := writeTempConfig(t,
 		"unknown_top: 1\n"+
-			"llm:\n  provider: openai\n  unknown_nested: hello\n")
+			"llm:\n  chat_model: chat\n  unknown_nested: hello\n")
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("未知字段不应导致加载失败: %v", err)
 	}
-	if cfg.LLM.Provider != "openai" {
-		t.Errorf("LLM.Provider = %q，期望 openai", cfg.LLM.Provider)
+	if cfg.LLM.ChatModel != "chat" {
+		t.Errorf("LLM.ChatModel = %q，期望 chat", cfg.LLM.ChatModel)
 	}
 }
 
 // B-006 守卫：根 config.yaml 与嵌入模板解析结果一致（防双份漂移）。
 // 注意：① 仅比较解析后的内容，不比较注释等格式差异；
-// ② llm.openai.api_key 为敏感字段，允许本地与模板不一致（模板恒为空，
+// ② 各模型条目的 api_key 为敏感字段，允许本地与模板不一致（模板恒为空，
 // 本地由用户写入或环境变量 EnvLLMAPIKey 提供），比较前排除。
 func TestRootConfigYAMLSyncedWithDefault(t *testing.T) {
 	rootPath := filepath.Join("..", "..", "config.yaml")
@@ -267,8 +280,12 @@ func TestRootConfigYAMLSyncedWithDefault(t *testing.T) {
 		t.Fatalf("加载默认模板失败: %v", err)
 	}
 
-	rootCfg.LLM.OpenAI.APIKey = ""
-	defaultCfg.LLM.OpenAI.APIKey = ""
+	for i := range rootCfg.LLM.Models {
+		rootCfg.LLM.Models[i].APIKey = ""
+	}
+	for i := range defaultCfg.LLM.Models {
+		defaultCfg.LLM.Models[i].APIKey = ""
+	}
 
 	if !reflect.DeepEqual(*rootCfg, *defaultCfg) {
 		t.Errorf("根 config.yaml 与嵌入默认模板不一致（新增配置字段时需双处同步，见 B-006）：\n根配置   = %+v\n默认模板 = %+v", *rootCfg, *defaultCfg)
@@ -291,9 +308,64 @@ func TestLoadMissingFileCreatesParentDir(t *testing.T) {
 // 嵌入的默认配置应包含全部配置节（与 Config 结构对应）。
 func TestDefaultYAMLHasAllSections(t *testing.T) {
 	content := string(defaultConfigYAML)
-	for _, section := range []string{"bot:", "onebot:", "log:", "control:", "middleware:", "rate_limit:", "llm:", "openai:", "tools:", "agent:"} {
+	for _, section := range []string{"bot:", "onebot:", "log:", "control:", "middleware:", "rate_limit:", "llm:", "models:", "chat_model:", "vision_model:", "native_multimodal:", "tools:", "agent:"} {
 		if !strings.Contains(content, section) {
 			t.Errorf("默认配置缺少 %q 节", section)
 		}
 	}
+}
+
+// LLMConfig 只读解析助手：ChatEntry 空 → models[0]；VisionEntry 空 → false；ByName 未命中 → false。
+func TestLLMEntryHelpers(t *testing.T) {
+	t.Run("ChatEntry 空引用取 models[0]", func(t *testing.T) {
+		cfg := LLMConfig{
+			Models:    []LLMModelConfig{{Name: "chat", Model: "a"}, {Name: "vision", Model: "b"}},
+			ChatModel: "",
+		}
+		entry, ok := cfg.ChatEntry()
+		if !ok || entry.Model != "a" {
+			t.Errorf("ChatEntry 空引用应取 models[0]，实际 %+v ok=%v", entry, ok)
+		}
+	})
+	t.Run("ChatEntry 按 name 命中", func(t *testing.T) {
+		cfg := LLMConfig{
+			Models:    []LLMModelConfig{{Name: "chat", Model: "a"}, {Name: "vision", Model: "b"}},
+			ChatModel: "vision",
+		}
+		entry, _ := cfg.ChatEntry()
+		if entry.Model != "b" {
+			t.Errorf("ChatEntry 应按 name 命中，实际 %+v", entry)
+		}
+	})
+	t.Run("ChatEntry 未命中报 false", func(t *testing.T) {
+		cfg := LLMConfig{Models: []LLMModelConfig{{Name: "chat"}}, ChatModel: "nope"}
+		if _, ok := cfg.ChatEntry(); ok {
+			t.Error("ChatEntry 未命中应返回 false")
+		}
+	})
+	t.Run("VisionEntry 空引用返回 false（描述关闭）", func(t *testing.T) {
+		cfg := LLMConfig{Models: []LLMModelConfig{{Name: "chat"}}, VisionModel: ""}
+		if _, ok := cfg.VisionEntry(); ok {
+			t.Error("VisionEntry 空引用应返回 false")
+		}
+	})
+	t.Run("VisionEntry 按 name 命中", func(t *testing.T) {
+		cfg := LLMConfig{
+			Models:      []LLMModelConfig{{Name: "chat"}, {Name: "vision", Model: "vl"}},
+			VisionModel: "vision",
+		}
+		entry, ok := cfg.VisionEntry()
+		if !ok || entry.Model != "vl" {
+			t.Errorf("VisionEntry 应按 name 命中，实际 %+v ok=%v", entry, ok)
+		}
+	})
+	t.Run("Models 空时任何引用返回 false", func(t *testing.T) {
+		cfg := LLMConfig{}
+		if _, ok := cfg.ChatEntry(); ok {
+			t.Error("Models 空时 ChatEntry 应返回 false")
+		}
+		if _, ok := cfg.VisionEntry(); ok {
+			t.Error("Models 空时 VisionEntry 应返回 false")
+		}
+	})
 }

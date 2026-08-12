@@ -17,17 +17,23 @@ type MemoryService struct {
 	store      domain.Storage
 	profiles   *ProfileCache
 	compressor *Compressor
+	describer  domain.MediaDescriber // 阶段2：图片描述器；nil = 描述关闭（P6 BuildContext 惰性装配消费）
 }
 
-// NewMemoryService 创建 MemoryService，注入 domain.Memory（窗口实现）、domain.Storage
-// 与 domain.Summarizer（窗口压缩的 LLM 摘要器）。
-func NewMemoryService(memory domain.Memory, store domain.Storage, summarizer domain.Summarizer) *MemoryService {
-	return &MemoryService{
+// NewMemoryService 创建 MemoryService，注入 domain.Memory（窗口实现）、domain.Storage、
+// domain.Summarizer（窗口压缩的 LLM 摘要器）与可选 domain.MediaDescriber（图片描述器，
+// 变参，nil = 描述关闭；P6 装配时经 BuildContext 惰性调用）。
+func NewMemoryService(memory domain.Memory, store domain.Storage, summarizer domain.Summarizer, describer ...domain.MediaDescriber) *MemoryService {
+	s := &MemoryService{
 		memory:     memory,
 		store:      store,
 		profiles:   NewProfileCache(store),
 		compressor: NewCompressor(memory, summarizer, NewSummaryStore(store)),
 	}
+	if len(describer) > 0 {
+		s.describer = describer[0]
+	}
+	return s
 }
 
 // PersistMessage 持久化一条消息：写入上下文窗口（内存 ring buffer）+ SQLite messages 表，

@@ -38,10 +38,14 @@ func (r *Registry) Register(name string, f Factory) error {
 	return nil
 }
 
-// NewAgent 按 cfg.LLM.Provider 分发构建 Agent。
+// NewAgent 按对话模型条目（cfg.LLM.ChatModel 引用 name，空 → models[0]）的 provider 分发构建 Agent。
 // provider 空 → DefaultLLMProvider；未注册 → 错误（错误信息含已注册列表）。
 func (r *Registry) NewAgent(ctx context.Context, cfg config.Config) (domain.Agent, error) {
-	name := cfg.LLM.Provider
+	entry, err := chatEntry(cfg)
+	if err != nil {
+		return nil, err
+	}
+	name := entry.Provider
 	if name == "" {
 		name = config.DefaultLLMProvider
 	}
@@ -72,7 +76,11 @@ func registeredProviders(m map[string]Factory) string {
 // system_prompt 空 → DefaultSystemPrompt（均经 Instruction/元数据注入 EinoAgent）。
 func NewOpenAIFactory(tr *ToolsRegistry) Factory {
 	return func(ctx context.Context, cfg config.Config) (domain.Agent, error) {
-		cm, err := buildChatModel(ctx, cfg)
+		entry, err := chatEntry(cfg)
+		if err != nil {
+			return nil, err
+		}
+		cm, err := buildModelFromEntry(ctx, entry, cfg.LLM.TimeoutSeconds)
 		if err != nil {
 			return nil, err
 		}
@@ -96,40 +104,49 @@ func NewOpenAIFactory(tr *ToolsRegistry) Factory {
 	}
 }
 
-// buildChatModel 依据 LLM 配置构造 OpenAI 兼容 ChatModel（供对话 Agent 与摘要器复用）。
+// chatEntry 解析对话模型条目：cfg.LLM.ChatModel 引用 name，空 → models[0]。
+// 空列表 / 引用未命中统一报错，供 NewAgent、工厂与 NewSummarizer 复用。
+func chatEntry(cfg config.Config) (config.LLMModelConfig, error) {
+	entry, ok := cfg.LLM.ChatEntry()
+	if !ok {
+		return config.LLMModelConfig{}, errors.New("llm.chat_model 未指向任何 models 条目（需至少配置一个模型条目）")
+	}
+	return entry, nil
+}
+
+// buildModelFromEntry 依据单个模型条目构造 OpenAI 兼容 ChatModel
+// （供对话 Agent、摘要器与图片描述器复用）。
 // 兜底语义：base_url 空 → DefaultOpenAIBaseURL；model 空 → 报错（空值不可猜测）；
 // timeout_seconds ≤0 → DefaultLLMTimeoutSeconds；api_key 空透传；
 // Temperature 转 *float32；MaxTokens >0 → MaxCompletionTokens。
-func buildChatModel(ctx context.Context, cfg config.Config) (model.BaseChatModel, error) {
-	o := cfg.LLM.OpenAI
-
-	baseURL := o.BaseURL
+func buildModelFromEntry(ctx context.Context, e config.LLMModelConfig, timeoutSeconds int) (model.BaseChatModel, error) {
+	baseURL := e.BaseURL
 	if baseURL == "" {
 		baseURL = config.DefaultOpenAIBaseURL
 	}
-	if o.Model == "" {
-		return nil, errors.New("llm.openai.model 未配置（空值不可猜测，请在 config.yaml 中填写模型名）")
+	if e.Model == "" {
+		return nil, fmt.Errorf("llm.models[%s].model 未配置（空值不可猜测，请在 config.yaml 中填写模型名）", e.Name)
 	}
-	timeout := cfg.LLM.TimeoutSeconds
+	timeout := timeoutSeconds
 	if timeout <= 0 {
 		timeout = config.DefaultLLMTimeoutSeconds
 	}
 
 	var temperature *float32
-	if o.Temperature != nil {
-		t := float32(*o.Temperature)
+	if e.Temperature != nil {
+		t := float32(*e.Temperature)
 		temperature = &t
 	}
 	var maxTokens *int
-	if o.MaxTokens > 0 {
-		mt := o.MaxTokens
+	if e.MaxTokens > 0 {
+		mt := e.MaxTokens
 		maxTokens = &mt
 	}
 
 	cm, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		BaseURL:             baseURL,
-		APIKey:              o.APIKey,
-		Model:               o.Model,
+		APIKey:              e.APIKey,
+		Model:               e.Model,
 		Timeout:             time.Duration(timeout) * time.Second,
 		Temperature:         temperature,
 		MaxCompletionTokens: maxTokens,

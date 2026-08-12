@@ -174,7 +174,7 @@ func buildLevel1UserPrompt(batch []entity.Message) string {
 	var sb strings.Builder
 	sb.WriteString("以下是群聊记录（按时间顺序，每条为「发送者QQ号 + 内容」）：\n")
 	for i, m := range batch {
-		fmt.Fprintf(&sb, "%d [%s]: %s\n", i+1, m.UserID, m.Content)
+		fmt.Fprintf(&sb, "%d [%s]: %s\n", i+1, m.UserID, m.Render())
 	}
 	return sb.String()
 }

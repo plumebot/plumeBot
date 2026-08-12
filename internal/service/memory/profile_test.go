@@ -9,7 +9,7 @@ import (
 
 // groupMsgBy 构造带发送者的群聊消息。
 func groupMsgBy(groupID, userID, content string) entity.Message {
-	return entity.Message{GroupID: groupID, UserID: userID, MessageType: "group", Content: content}
+	return entity.Message{GroupID: groupID, UserID: userID, MessageType: "group", Parts: textParts(content)}
 }
 
 func TestProfileCacheLoadsGroupOnFirstAppearance(t *testing.T) {
@@ -60,7 +60,7 @@ func TestProfileCachePrivateMessageIgnored(t *testing.T) {
 	store := &fakeStorage{}
 	p := NewProfileCache(store)
 
-	p.TouchMessage(context.Background(), entity.Message{UserID: "u1", MessageType: "private", Content: "hi"})
+	p.TouchMessage(context.Background(), entity.Message{UserID: "u1", MessageType: "private", Parts: textParts("hi")})
 
 	if store.groupGets != 0 {
 		t.Errorf("私聊消息不应触发群画像加载: group=%d", store.groupGets)
