@@ -30,6 +30,7 @@ func toMessage(ev *zero.Event, cache *imagecache.Cache) (entity.Message, bool) {
 		Parts:       toParts(ev.Message, cache),
 		Timestamp:   ev.Time,
 		MessageType: ev.MessageType,
+		Mentioned:   ev.IsToMe, // P5-001：私聊恒 true；群聊被 @（at-self 段已剥离）为 true
 	}, true
 }
 

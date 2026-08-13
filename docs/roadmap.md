@@ -93,7 +93,7 @@
 
 | 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 | 状态 |
 |---|---------|------|:---:|------|------|------|:--:|
-| P5-001 | 触发模式 | 实现 mention（仅 @/私聊回复）和 auto（AI 自主判断）模式，每个群可独立配置 | P0 | service/control | P2-002、P2-004 | mention 模式只有被 @ 才回复；auto 模式可通过预检后自主回复 |  |
+| P5-001 | 触发模式 | 实现 mention（仅 @/私聊回复）和 auto（AI 自主判断）模式，每个群可独立配置 | P0 | service/control | P2-002、P2-004 | mention 模式只有被 @ 才回复；auto 模式可通过预检后自主回复 | ✅ |
 | P5-002 | 状态规则 | 实现精力值（消耗/恢复）、冷却时间、连续回复上限、时段控制、短消息忽略；纯规则层，不调 LLM | P0 | service/control | P5-001 完成 | 精力低于阈值不主动说话；连续 N 句后强制冷却；深夜静默 |  |
 
 ---
@@ -135,7 +135,6 @@
 |------|:---:|------|------|----------|------|
 | B-003 | P6-002 | 回复发送机制（已定方案 B：Sender 注入 ctx） | P6-002 设计决策 | P6-002 实现时 | 选定「方案 B：Sender 注入 ctx」（替代原方案 A 回复上抛）：matcher 闭包构造 per-event 的 `domain.Sender`（实现内持有 `*zero.Ctx`）经 `domain.WithSender(ctx, s)` 注入，Handler 链签名保持 `(ctx,msg) error` 不变；需回复的环节（agent service 收 `Generate` 返回值、插件等）`domain.SenderFrom(ctx).Send(reply)` 直接发送，载荷为结构化 `entity.Reply{ReplyID, AtTarget, Parts}`（多模态 + 引用回复 + @，onebot 实现转 `message.ReplyWithMessage`/`message.At` 段后 `ctx.SendChain`）。限流/敏感词固定文案维持现状（闭包 `decideReply(err)` 处理哨兵错误，见 CLAUDE.md §5.6）。`domain.Sender` 不含动作能力（与回复正交，见 B-015），也不含非响应式主动发送——后者（异步插件、定时、P5 auto 后续发言）需显式目标，届时另定义 `SendTo` 形态并 main 注入 |
 | B-004 | P6-003 | 无界 map 内存治理（限流/窗口/画像/摘要） | P2-003 实现注释 + 设计评审 L1 | P6-003 | ratelimit `map[string]*rate.Limiter`、`Window.data`、`ProfileCache.groups`、`SummaryStore.chains/nextSeq` 四个按群/用户键的 map 只增不删，需按空闲时长统一淘汰（LRU 或 TTL） |
-| B-005 | P5-001 | Control.Mode 空值兜底 | config 重构 | P5-001 接入 control 服务时 | 消费方自理默认值：mode 为空 → "mention"，在 control service 侧兜底（main 目前未接 cfg.Control） |
 | B-006 | 持续 | 配置模板双份同步 | config 重构 | 新增配置字段时 | pkg/config/config.default.yaml 与根 config.yaml 需手动同步（config.go 注释已标明）。阶段 2 llm 数组化后守卫测试 `TestRootConfigYAMLSyncedWithDefault` 已随 `models[]` 更新，api_key 按条目逐项排除比较 |
 | B-007 | 后置 | 连接级 context 传播 | P2-003 设计讨论 | ZeroBot 支持或自研连接时 | ZeroBot 无事件级 ctx，连接层传 context.Background()；service Handler 已预留 ctx 参数，未来仅需改 onebot 一处 |
 | B-008 | 后置 | eino 版本升级观察 | P2-004 评审决策 | eino-ext 跟进 v0.9 后 | 当前锁定 eino v0.8.13 + eino-ext openai v0.1.13。**不升 v0.9 的理由**（原 P2-004 计划文档 §3 决策，已归档进本行）：① eino-ext 生态滞后——eino-ext main 仍 require `eino v0.7.13`，与 v0.9 schema 大改（ToolInfo 移除 Bound/InvokableRun、agent 迁 adk）组合存在编译/行为不兼容风险；② v0.9 取最终文本需 Runner + AsyncIterator 事件循环，v0.8 为薄门面（消息进、文本出），本项目不需要事件流复杂度；③ v0.9 发布太新，文档与示例几乎全是旧 API，踩坑成本高；④ 本项目需要的多模态字段（UserInputMultiContent/MessageInputImage）、tool 自动循环在 v0.8.13 全部可用且非废弃；⑤ 迁移成本可控——domain.Agent 是门面，infra/ai 内部换实现不影响上层。API 速查见 docs/eino-notes.md；待 eino-ext 跟进 v0.9 且 adk API 稳定后评估迁移 |
@@ -151,8 +150,6 @@
 | B-020 | 后置 | `plugin_config` 表使用 + 插件自持状态 | P4-002 范围外 | 有需要时 | 按群插件配置（§11 `plugin_config` 表）与插件自持状态读写，当前 `plugin.json` 仅承载命令表元数据 |
 | B-021 | P6 | 引用回复（reply 段）解析 | 多模态修复阶段 1 裁剪 | P6 有需要时 | 入站 `reply` 段当前被丢弃（face/forward/json/xml/music 同为永久简化，但 reply 不同）。引用回复是强上下文信号：支持需解析引用 `message_id`，从窗口 / SQLite 找回原文并入上下文。P6 级能力，未排期 |
 | B-022 | 后置 | `data/image_cache/` 文件只增不清 | 阶段 2 base64 入链闭合 + 设计评审 E7 | 有需要时 | `internal/infra/imagecache` 按内容 md5 去重落盘（同图幂等），但无引用计数/淘汰，长期运行会累积缓存文件；届时按体积/时间做清理策略。另：`Save` 的 `Stat+WriteFile` 有 TOCTOU，改 `O_CREATE|O_EXCL` 原子去重（随本项处理） |
-| B-023 | P5-001 | Control 接口两方法 + ControlService 自身实现 | 设计评审 C1/C3 | P5-001 编码 | `domain.Control` = `ShouldReply(ctx,event)→Decision` + `OnReplied(ctx,event)`（Decision 带 reason：mention 强制 / auto 通过 / 精力不足 / 冷却中 / 深夜静默 / 短消息忽略）；状态经 `bot_state` 读写；`ControlService` 自身实现规则（移除注入死字段）。接口在 domain，实现放 service/control |
-| B-024 | P5-001 | per-group 群配置表 `group_config` | 设计评审 C2 | P5-001 建表 | 存 per-group 静态配置（`mode` 起，后续可扩展 per-group 精力阈值等），与 `bot_state`（运行态）职责分离；dev 直接改 001 schema（不加 drop 迁移） |
 | B-025 | P6-001 | 图片描述持久化 | 设计评审 M1 | P6-001 实现 | 描述写回 `messages.parts`（新增 `Storage.UpdateMessageParts`/`SaveMessageDescription`），成为可检索持久数据，URL 过期后描述不丢 |
 | B-026 | P6-001 | `Message.ForLLM()` 文本视图 | 设计评审 M5 | P6-001 实现 | text + at + 图片描述（无则 `[图片]`）统一 LLM 文本视图；压缩 `buildLevel1UserPrompt` 与 prompt 组装共用；`Render()` 留给日志 |
 | B-027 | P6-001 | 描述缓存下沉 describer + 预算 | 设计评审 M6 | P6-001 实现 | 缓存下沉 `EinoMediaDescriber` 实现（`contentHash→desc` 并发安全 map）；预算策略组装层定（只描述窗口内 image + 每轮上限） |
@@ -160,6 +157,7 @@
 | B-033 | P6 | `GetMessages` 私聊维度 | 设计评审 S3 | P6 | 接口加 user_id，私聊按用户区分（当前 `group_id=""` 会混） |
 | B-034 | 后置 | 版本化迁移 | 设计评审 S1 | 生产前 | `schema_migrations` 版本化，替代全量重跑 001（解决加列不生效） |
 | B-035 | 阶段3 | 阶段3 原生多模态（`native_multimodal`）+ 本地路径转 base64 | 设计评审 M4 + 多模态阶段 3 设计 | 阶段3 | `native_multimodal: true` 时 image part 直接进 ChatMessage 喂视觉模型（可选增强：读取后转描述省上下文；可能的对象存储升级后续）；`loadImageBytes` 下沉共享 helper，`ToSchema`/`partCommon` 对本地路径走 base64（默认关，不阻塞；配置字段已占位） |
+| B-036 | P5-002 | per-group 配置内存缓存 | P5-001 设计 | P5-002 优化时 | 热路径每条非命令消息一次 `GetGroupConfig` 单 PK 查询（秒级流量可忽略，P5-001 接受）；如优化，per-group 静态配置（groupID→mode，mode 变更低频）加短 TTL 内存缓存，届时再引入缓存淘汰复杂度 |
 
 ---
 

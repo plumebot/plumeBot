@@ -3,12 +3,13 @@ package event
 import (
 	"context"
 
+	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/service/agent"
-	"plumebot/internal/service/control"
 	"plumebot/internal/service/memory"
 	"plumebot/internal/service/plugin"
 	"plumebot/pkg/config"
+	"plumebot/pkg/logger"
 )
 
 // EventService 是顶层事件调度编排，组合所有子 service。
@@ -16,7 +17,7 @@ type EventService struct {
 	agent    *agent.AgentService
 	memory   *memory.MemoryService
 	plugin   *plugin.PluginService
-	control  *control.ControlService
+	control  domain.Control
 	msgChain Handler
 }
 
@@ -26,7 +27,7 @@ func NewEventService(
 	agent *agent.AgentService,
 	memory *memory.MemoryService,
 	plugin *plugin.PluginService,
-	control *control.ControlService,
+	control domain.Control,
 	mwCfg config.MiddlewareConfig,
 ) *EventService {
 	s := &EventService{
@@ -45,8 +46,9 @@ func NewEventService(
 }
 
 // tail 是消息管线的末端处理：持久化消息（写入上下文窗口 + SQLite），
-// 窗口满时触发 P3-003 异步窗口压缩；随后进入命令分支（/开头 → 插件分发，P4-002）。
-// Agent 回复闭环（P6-002）尚未接入，这里仅完成记忆持久化、压缩触发与插件命令分发。
+// 窗口满时触发 P3-003 异步窗口压缩；随后命令分支（/开头 → 插件分发，P4-002，
+// 命令消息短路绕过触发判断，架构 §10.2）；最后对普通消息做 P5-001 触发判断。
+// Agent 回复闭环（P6-002）尚未接入，触发判断只标记，不发送。
 func (s *EventService) tail(ctx context.Context, msg entity.Message) error {
 	full, err := s.memory.PersistMessage(ctx, msg)
 	if err != nil {
@@ -55,7 +57,36 @@ func (s *EventService) tail(ctx context.Context, msg entity.Message) error {
 	if full {
 		s.memory.Compress(ctx, msg)
 	}
-	return s.dispatchCommand(ctx, msg)
+	handled, err := s.dispatchCommand(ctx, msg)
+	if err != nil {
+		return err
+	}
+	if handled {
+		return nil // 命令消息已走插件分支，绕过触发判断
+	}
+	return s.judgeReply(ctx, msg)
+}
+
+// judgeReply 是 P5-001 触发判断：对非命令普通消息调 control service 判断是否应回复。
+// 只做判断 + 日志标记，不发送回复（发送归 P6-002 B-003 Sender）。
+// 判断失败不阻断管线：记录告警并保守忽略（不触发）。
+func (s *EventService) judgeReply(ctx context.Context, msg entity.Message) error {
+	d, err := s.control.ShouldReply(ctx, msg)
+	if err != nil {
+		logger.Warn("触发判断失败",
+			logger.S("group_id", msg.GroupID), logger.S("user_id", msg.UserID), logger.Err(err))
+		return nil
+	}
+	if d.Reply {
+		logger.Info("触发回复",
+			logger.S("group_id", msg.GroupID), logger.S("user_id", msg.UserID),
+			logger.S("message_id", msg.MessageID), logger.S("reason", string(d.Reason)))
+	} else {
+		logger.Debug("未触发回复",
+			logger.S("group_id", msg.GroupID), logger.S("user_id", msg.UserID),
+			logger.S("message_id", msg.MessageID), logger.S("reason", string(d.Reason)))
+	}
+	return nil
 }
 
 // HandleMessage 处理消息事件：走「日志 → 限流 → 敏感词 → 末端」管线。

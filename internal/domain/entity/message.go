@@ -13,6 +13,8 @@ type Message struct {
 	Parts       []ContentPart // 消息内容段（text/at/image/audio/video/file）
 	Timestamp   int64         // Unix 时间戳（秒）
 	MessageType string        // 消息类型：group / private
+	Mentioned   bool          // 是否点名 bot：私聊恒 true；群聊被 @（at-self 段已被 ZeroBot 剥离）为 true。
+	// 来源：ZeroBot 事件 IsToMe（P5-001）。不落 SQLite（触发判断只发生在实时事件上，窗口内存保留）。
 }
 
 // PlainText 返回消息的纯文本视图：仅拼接 text 段（不含 @、图片等标记）。

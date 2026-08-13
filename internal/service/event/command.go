@@ -30,10 +30,12 @@ func parseCommand(content string) (cmd string, args []string, ok bool) {
 // dispatchCommand 是命令分支（架构 §10.2「是命令? → 插件分发」）：以 / 开头的消息
 // 路由到插件执行，校验通过后记录指令集摘要。P4-002 只定义协议 + 校验，不执行回复/动作
 // （发送归 P6-002 B-003，群管理归 B-015）。
-func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) error {
+// 返回 handled：true = 命令消息已分发（调用方短路，不再走触发判断）；
+// false = 非命令消息（调用方继续触发判断）。
+func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) (bool, error) {
 	cmd, args, ok := parseCommand(msg.PlainText())
 	if !ok {
-		return nil
+		return false, nil
 	}
 	res, err := s.plugin.Dispatch(ctx, entity.PluginRequest{
 		Proto:     1,
@@ -56,7 +58,7 @@ func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) 
 	default:
 		logger.Warn("插件命令执行失败", logger.S("command", cmd), logger.Err(err))
 	}
-	return nil
+	return true, nil // 命令分支吞错误只记日志（维持现状），始终 handled
 }
 
 // replySegmentSummary 汇总回复段类型，如 "text,image"。

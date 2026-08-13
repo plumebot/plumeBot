@@ -341,9 +341,11 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 | persona | 人格模板（agent 绑定，见 §7） |
 | bot_state | bot 在各群的状态 |
 | plugin_config | 插件在各群的配置 |
+| group_config | 群静态配置（mode 起，P5-001） |
 
-> 说明：共 8 张表（7 张业务表 + conversation_summary 归档摘要表）。member_profile（个人画像统计）
+> 说明：共 9 张表（8 张业务表 + conversation_summary 归档摘要表）。member_profile（个人画像统计）
 > 已于 P3-005 移除——成员上下文由 member_facts 承担；人格为 DB 人格模板（见 §7）。
+> group_config 为 P5-001 新增（per-group 静态配置，与 bot_state 运行态职责分离）。
 
 ---
 

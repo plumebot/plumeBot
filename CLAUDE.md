@@ -103,12 +103,15 @@ persona 重构为 agent 绑定人格模板，见架构 §7）。
 internal/infra/plugin_exe 做 go-plugin net/rpc 接线（手写 shim，免 protoc），host 侧 service/plugin 发现路由（plugin.json）+ 命令分发分支；
 只定义协议 + 宿主校验（ValidatePluginResult），不执行回复/动作，见架构 §8.6 与 B-017）。
 已完成：第四阶段（人格与插件）全部完结，进入第五阶段。
+已完成：P5-001 触发模式（mention/auto 双模式，per-group group_config 表可独立配置；
+domain.Control 两方法 ShouldReply→Decision + OnReplied；service/control 模式判定 + event tail
+触发判断接线，只标记不发送，发送归 P6-002，见架构 §9 与 B-003）。
 ```
 
 禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：
 
 - 插件回复/动作**执行**（P4-002 只定义协议，回复发送归 P6-002、群管理动作归 B-015，勿提前实装）；
-- 完整 Agent 对话闭环（群聊回复闭环属 P6-002；当前管线末端 tail 仅做持久化（窗口+SQLite）+ 插件命令分发，Agent 能力由 eino 直调验证）；
+- 完整 Agent 对话闭环（群聊回复闭环属 P6-002；当前管线末端 tail 仅做持久化（窗口+SQLite）+ 插件命令分发 + P5-001 触发判断（只标记、不发送），Agent 能力由 eino 直调验证）；
 - 端到端压测（P6-003）
 
 ## 3. 技术栈
@@ -154,7 +157,7 @@ plumebot/
 │   │   ├── memory.go               #   Memory 接口（P3-001 由 service/memory 实现）
 │   │   ├── plugin.go               #   Plugin 接口（stub）
 │   │   ├── storage.go              #   Storage 接口（P2-001 已实现）
-│   │   ├── control.go              #   Control 接口（stub）
+│   │   ├── control.go              #   Control 接口（P5-001 由 service/control 实现）
 │   │   └── errors.go               #   哨兵错误 + 参数化错误（SensitiveWordError）
 │   ├── service/                    # 业务编排层，依赖 domain 接口
 │   │   ├── event/                  #   中间件链：日志 → 限流 → 敏感词 → 持久化(tail)
@@ -166,14 +169,14 @@ plumebot/
 │   │   ├── agent/                  #   薄透传：GenerateReply → domain.Agent
 │   │   ├── memory/                 #   上下文窗口 + 群画像缓存 + 窗口压缩（P3-001/002/003 已实现；成员画像已移除）
 │   │   ├── plugin/                 #   stub
-│   │   └── control/                #   stub
+│   │   └── control/                #   触发判断（P5-001 mention/auto 模式，只标记不发送）
 │   ├── handler/                    # 事件处理入口（薄胶水，无业务逻辑）
 │   │   ├── message.go              #   消息事件 → event service
 │   │   └── notice.go               #   通知事件 → 规则处理（stub）
 │   └── infra/                      # 基础设施，实现 domain 接口
 │       ├── onebot/                 #   ZeroBot 封装（已接入：matcher 分发 + 固定文案回复）
 │       ├── ai/                     #   eino Agent + 摘要器实现（P2-004 provider 注册中心 + 多模态转换 + tool 机制；P3-003 Summarizer 裸模型单次调用；P3-004 tools/ 记忆更新工具）
-│       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，8 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）
+│       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，9 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）
 │       │   └── migrations/        #     DDL 迁移文件（001 单文件，migrate 全量执行）
 │       └── plugin_exe/             #   子进程插件 SDK（go-plugin net/rpc：插件侧 Serve + 宿主侧客户端）
 ├── pkg/                            # 可复用工具
@@ -306,7 +309,7 @@ domain 零依赖
 - 限流：`golang.org/x/time/rate` 令牌桶，按群（私聊按用户）独立，超时返回 `ErrRateLimited`；
 - 敏感词：`pkg/ahocorasick` 匹配，空词表 = 不过滤；
 - 日志中间件记录 message_id/group_id/user_id/message_type/content，日志不重复（infra/onebot 不再打消息 Info）；
-- 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录，不发送，见架构 §10.2）。
+- 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录，不发送，见架构 §10.2）；最后对普通消息做 P5-001 触发判断（control service：mention/auto 模式，只标记触发与否 + 日志，发送归 P6-002 B-003）。
 
 ### 6.4 internal/handler/
 
@@ -325,7 +328,7 @@ domain 零依赖
 现状：
 
 - `onebot/`：已接入（matcher 注册 + 事件转换 + 固定文案回复）；已实现、有单测。
-- `sqlite/`：已接入（P2-001，8 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）。
+- `sqlite/`：已接入（P2-001，9 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）。
 - `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿；P3-004：`ai/tools` 记忆更新工具 store_fact/learn_jargon/forget_fact，会话身份经 `entity.Session` 注入 ctx）。
 - `plugin_exe/`：子进程插件 SDK，P4-002 已实现（go-plugin net/rpc：插件侧 `Serve` + 宿主侧 `NewClient`，宿主侧唯一 `domain.Plugin` 实现为 `Client`）。
 

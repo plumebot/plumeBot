@@ -1,9 +1,10 @@
 -- =============================================================================
 -- Migration: 001_initial_schema
 -- 描述:      PlumeBot 数据库全部表结构（单文件；conversation_summary 与
---           group_jargon.status 已并入，原 002/003 迁移文件删除）：
---           共 8 张表 + 3 个索引。
--- 创建时间:  2026-07（002/003 于 P3-005 合并）
+--           group_jargon.status 已并入，原 002/003 迁移文件删除；
+--           group_config 为 P5-001 新增）：
+--           共 9 张表 + 4 个索引。
+-- 创建时间:  2026-07（002/003 于 P3-005 合并；group_config 于 P5-001 追加）
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -126,3 +127,14 @@ CREATE TABLE IF NOT EXISTS conversation_summary (
 
 CREATE INDEX IF NOT EXISTS idx_conversation_summary_chat
     ON conversation_summary(chat_id, seq);
+
+-- -----------------------------------------------------------------------------
+-- 9. group_config — 群静态配置（P5-001）
+-- 作用:   每群一条，存 per-group 静态配置（mode 起，后续可扩展精力阈值等）。
+--         与 bot_state（运行态 JSON）职责分离；未配置行（group_id 不存在或
+--         mode 为空）= 走全局 cfg.Control.Mode 兜底。
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS group_config (
+    group_id TEXT PRIMARY KEY,          -- 群 ID
+    mode     TEXT NOT NULL DEFAULT ''   -- 触发模式：mention | auto；空 = 未配置
+);

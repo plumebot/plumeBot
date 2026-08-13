@@ -423,3 +423,25 @@ func (s *Storage) DeletePluginConfig(ctx context.Context, groupID, pluginName st
 	_, err := s.db.ExecContext(ctx, sqlDeletePluginConfig, groupID, pluginName)
 	return err
 }
+
+// ──────────────────────────── group_config ────────────────────────────
+
+// UpsertGroupConfig 插入或更新群的静态配置（group_id 冲突时覆盖）。
+func (s *Storage) UpsertGroupConfig(ctx context.Context, cfg entity.GroupConfig) error {
+	_, err := s.db.ExecContext(ctx, sqlUpsertGroupConfig, cfg.GroupID, cfg.Mode)
+	return err
+}
+
+// GetGroupConfig 按群 ID 查询静态配置。不存在时返回 domain.ErrNotFound。
+func (s *Storage) GetGroupConfig(ctx context.Context, groupID string) (*entity.GroupConfig, error) {
+	row := s.db.QueryRowContext(ctx, sqlGetGroupConfig, groupID)
+
+	var c entity.GroupConfig
+	if err := row.Scan(&c.GroupID, &c.Mode); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return &c, nil
+}

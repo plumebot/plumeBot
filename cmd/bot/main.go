@@ -124,7 +124,8 @@ func main() {
 	// 3. 注入 service
 	agentSvc := agent.NewAgentService(agentInfra)
 	memorySvc := memory.NewMemoryService(memory.NewWindow(), storageInfra, summarizerInfra, describerInfra)
-	controlSvc := control.NewControlService(control.Nop())
+	// P5-001 触发控制：注入全局 cfg.Control.Mode（空 → mention 兜底）与存储（读 per-group group_config）。
+	controlSvc := control.NewControlService(cfg.Control, storageInfra)
 	eventSvc := event.NewEventService(agentSvc, memorySvc, pluginSvc, controlSvc, cfg.Middleware)
 
 	// 4. 注入 handler

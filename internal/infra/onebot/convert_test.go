@@ -89,6 +89,43 @@ func TestToMessageRejects(t *testing.T) {
 	}
 }
 
+// TestToMessageMentioned 校验 toMessage 透传 ZeroBot IsToMe → Message.Mentioned（P5-001）。
+func TestToMessageMentioned(t *testing.T) {
+	// 群聊被 @：IsToMe=true → Mentioned=true。
+	ev := &zero.Event{
+		PostType:    "message",
+		MessageType: "group",
+		MessageID:   int64(1),
+		GroupID:     int64(2),
+		UserID:      int64(3),
+		Message:     message.Message{message.Text("hi")},
+		IsToMe:      true,
+	}
+	m, ok := toMessage(ev, nil)
+	if !ok || !m.Mentioned {
+		t.Errorf("群聊被 @ 时 Mentioned 应为 true, 实际 %+v", m)
+	}
+	// 群聊未 @：IsToMe=false → Mentioned=false。
+	ev.IsToMe = false
+	m, _ = toMessage(ev, nil)
+	if m.Mentioned {
+		t.Error("群聊未 @ 时 Mentioned 应为 false")
+	}
+	// 私聊恒 true（ZeroBot 对私聊 IsToMe 恒 true，P5-001 语义：私聊必回复）。
+	ev = &zero.Event{
+		PostType:    "message",
+		MessageType: "private",
+		MessageID:   int64(1),
+		UserID:      int64(3),
+		Message:     message.Message{message.Text("hi")},
+		IsToMe:      true,
+	}
+	m, _ = toMessage(ev, nil)
+	if !m.Mentioned {
+		t.Error("私聊时 Mentioned 应为 true")
+	}
+}
+
 // TestToParts 校验段数组 → Parts 映射（text/at/image/record/video/file + 丢弃段）。
 func TestToParts(t *testing.T) {
 	cases := []struct {

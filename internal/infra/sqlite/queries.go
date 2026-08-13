@@ -69,4 +69,11 @@ const (
 	sqlGetPluginConfig    = `SELECT group_id, plugin_name, config FROM plugin_config WHERE group_id = ? AND plugin_name = ?`
 	sqlListPluginConfigs  = `SELECT group_id, plugin_name, config FROM plugin_config WHERE group_id = ?`
 	sqlDeletePluginConfig = `DELETE FROM plugin_config WHERE group_id = ? AND plugin_name = ?`
+
+	// ── group_config ──
+
+	sqlUpsertGroupConfig = `INSERT INTO group_config (group_id, mode) VALUES (?, ?)
+ ON CONFLICT(group_id) DO UPDATE SET mode=excluded.mode`
+
+	sqlGetGroupConfig = `SELECT group_id, mode FROM group_config WHERE group_id = ?`
 )
