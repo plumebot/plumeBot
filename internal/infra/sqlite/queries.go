@@ -3,7 +3,7 @@ package sqlite
 const (
 	// ── messages ──
 
-	sqlSaveMessage = `INSERT INTO messages (message_id, group_id, user_id, parts, timestamp, message_type)
+	sqlSaveMessage = `INSERT OR IGNORE INTO messages (message_id, group_id, user_id, parts, timestamp, message_type)
  VALUES (?, ?, ?, ?, ?, ?)`
 
 	sqlGetMessages = `SELECT message_id, group_id, user_id, parts, timestamp, message_type

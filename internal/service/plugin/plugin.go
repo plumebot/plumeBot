@@ -16,7 +16,7 @@ import (
 // PluginClient 是 service 对单个插件进程句柄的抽象：可执行命令 + 可关闭。
 type PluginClient interface {
 	domain.Plugin
-	Close() error
+	Close()
 }
 
 // ClientFactory 由 main 注入，绑定具体实现（infra/plugin_exe），避免 service import infra。
@@ -24,10 +24,9 @@ type ClientFactory func(exePath string) (PluginClient, error)
 
 // metadata 对应 plugins/<name>/plugin.json（架构 §8.4 插件发现）。
 type metadata struct {
-	Name        string   `json:"name"`
-	Path        string   `json:"path"`     // 相对插件目录的可执行文件
-	Commands    []string `json:"commands"` // 支持的命令名（不含 /）
-	Description string   `json:"description"`
+	Name     string   `json:"name"`
+	Path     string   `json:"path"`     // 相对插件目录的可执行文件
+	Commands []string `json:"commands"` // 支持的命令名（不含 /）
 }
 
 // handle 记录单个插件进程的客户端句柄。
@@ -119,9 +118,6 @@ func (s *PluginService) Dispatch(ctx context.Context, req entity.PluginRequest) 
 	if !ok {
 		return entity.PluginResult{}, domain.ErrNotFound
 	}
-	if req.Proto == 0 {
-		req.Proto = 1
-	}
 	res, err := h.plugin.Execute(ctx, req)
 	if err != nil {
 		return entity.PluginResult{}, err
@@ -133,11 +129,8 @@ func (s *PluginService) Dispatch(ctx context.Context, req entity.PluginRequest) 
 }
 
 // Close 停止全部插件进程。
-func (s *PluginService) Close() error {
+func (s *PluginService) Close() {
 	for _, h := range s.handles {
-		if err := h.plugin.Close(); err != nil {
-			logger.Warn("插件关闭失败", logger.Err(err))
-		}
+		h.plugin.Close()
 	}
-	return nil
 }

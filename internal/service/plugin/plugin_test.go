@@ -37,12 +37,12 @@ func (f *fakePlugin) Execute(ctx context.Context, req entity.PluginRequest) (ent
 	return entity.PluginResult{}, nil
 }
 
-func (f *fakePlugin) Close() error { f.closed = true; return nil }
+func (f *fakePlugin) Close() { f.closed = true }
 
 // writePluginJSON 在 dir/<name>/ 下构造 plugin.json 测试元数据。
 func writePluginJSON(t *testing.T, dir, name, path string, commands []string) {
 	t.Helper()
-	b, err := json.Marshal(metadata{Name: name, Path: path, Commands: commands, Description: "test"})
+	b, err := json.Marshal(metadata{Name: name, Path: path, Commands: commands})
 	if err != nil {
 		t.Fatal(err)
 	}

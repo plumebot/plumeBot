@@ -112,6 +112,12 @@ func partToSchema(p entity.ContentPart) (schema.MessageInputPart, error) {
 			File: &schema.MessageInputFile{MessagePartCommon: common},
 		}, nil
 
+	case entity.PartTypeAt:
+		// at 为入站专用标记（[@qq]/[@全体]），不直接进 LLM。这里兜底转纯文本，
+		// 防含 @ 消息进 LLM 时在 ToSchema 报「未知 part 类型 at」（B-029）；
+		// P6-001 service 组装会显式 at→text（B-028），此处仅保证不崩。
+		return schema.MessageInputPart{Type: schema.ChatMessagePartTypeText, Text: p.Text}, nil
+
 	default:
 		return schema.MessageInputPart{}, fmt.Errorf("未知 part 类型 %q", p.Type)
 	}

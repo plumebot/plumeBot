@@ -16,6 +16,7 @@ import (
 
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
+	"plumebot/pkg/base64util"
 	"plumebot/pkg/config"
 )
 
@@ -93,7 +94,7 @@ func loadImageBytes(ctx context.Context, client *http.Client, part entity.Conten
 
 	switch {
 	case part.Base64 != "":
-		data, err = base64.StdEncoding.DecodeString(part.Base64)
+		data, err = base64util.Decode(part.Base64)
 		if err != nil {
 			return nil, "", fmt.Errorf("解码 Base64 图片失败: %w", err)
 		}

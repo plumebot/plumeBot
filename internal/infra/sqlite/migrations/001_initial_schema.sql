@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_group_time
     ON messages(group_id, timestamp);
 
+-- 消息幂等：message_id 全局唯一（B-031），配合 INSERT OR IGNORE 防重放重复行。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_message_id
+    ON messages(message_id);
+
 -- -----------------------------------------------------------------------------
 -- 2. group_profile — 群聊画像（每个群一条）
 -- 作用:   群文化特征、主流话题、活跃时段、群规、氛围标签。

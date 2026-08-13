@@ -1,7 +1,6 @@
 package onebot
 
 import (
-	"encoding/base64"
 	"errors"
 	"net/url"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/infra/imagecache"
+	"plumebot/pkg/base64util"
 )
 
 // toMessage 将 ZeroBot 消息事件转换为领域层 entity.Message。
@@ -88,10 +88,8 @@ func decodeBase64File(file string) ([]byte, error) {
 	if unescaped, err := url.PathUnescape(data); err == nil {
 		data = unescaped
 	}
-	if b, err := base64.StdEncoding.DecodeString(data); err == nil {
-		return b, nil
-	}
-	return base64.RawStdEncoding.DecodeString(data)
+	// Std/RawStd 兜底逻辑统一在 pkg/base64util（B-030）。
+	return base64util.Decode(data)
 }
 
 // toEvent 将 ZeroBot 通知/请求/元事件转换为领域层 entity.Event。

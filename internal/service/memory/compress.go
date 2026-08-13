@@ -83,7 +83,12 @@ func (c *Compressor) compress(ctx context.Context, chatID string) error {
 	if err != nil {
 		return err
 	}
+	// 批大小 = 满窗时取最早 CompressBatch 条（保留最新 CompressionKeep）；
+	// 窗口未满（防御路径）按实际长度取，不会超过 CompressBatch（B-032）。
 	batchEnd := len(msgs) - CompressionKeep
+	if batchEnd > CompressBatch {
+		batchEnd = CompressBatch
+	}
 	if batchEnd <= 0 {
 		return nil // 窗口不足一个压缩批次（防御：触发时窗口应已满）
 	}

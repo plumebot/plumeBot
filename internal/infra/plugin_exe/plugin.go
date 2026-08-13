@@ -143,9 +143,8 @@ func (c *Client) Execute(ctx context.Context, req entity.PluginRequest) (entity.
 }
 
 // Close 停止插件子进程。
-func (c *Client) Close() error {
+func (c *Client) Close() {
 	c.raw.Kill()
-	return nil
 }
 
 // 编译期校验：Client 实现 domain.Plugin。
