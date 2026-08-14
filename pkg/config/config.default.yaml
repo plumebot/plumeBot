@@ -15,6 +15,17 @@ log:
 
 control:
   mode: mention            # mention | auto
+  state:                   # 状态规则参数全局默认值（P5-002，架构 §9.2）；0/空 = 用代码默认
+    energy_max: 100        # 精力上限
+    energy_cost: 10        # 每次回复消耗
+    energy_recover: 5      # 精力恢复（点/分钟）
+    energy_threshold: 20   # 低于此值不主动说话（@ 除外）
+    cooldown_seconds: 60   # 两次主动回复最小间隔（秒）
+    consecutive_limit: 5   # 连续回复上限
+    rest_seconds: 300      # 连续达上限强制休息时长（秒）
+    quiet_hours_start: "23:00"  # 深夜静默起 "HH:MM"
+    quiet_hours_end: "07:00"    # 深夜静默止 "HH:MM"（跨午夜）
+    short_message_chars: 4 # 短消息忽略阈值（<N 字不触发）
 
 middleware:
   rate_limit:

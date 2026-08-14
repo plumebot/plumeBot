@@ -67,7 +67,8 @@ func (s *EventService) tail(ctx context.Context, msg entity.Message) error {
 	return s.judgeReply(ctx, msg)
 }
 
-// judgeReply 是 P5-001 触发判断：对非命令普通消息调 control service 判断是否应回复。
+// judgeReply 是 P5-001 触发判断 + P5-002 状态规则：对非命令普通消息调 control service 判断是否应回复。
+// 触发（Reply=true）时追调 OnReplied 更新运行态（P5-002 消耗精力/记冷却/连续计数）；
 // 只做判断 + 日志标记，不发送回复（发送归 P6-002 B-003 Sender）。
 // 判断失败不阻断管线：记录告警并保守忽略（不触发）。
 func (s *EventService) judgeReply(ctx context.Context, msg entity.Message) error {
@@ -81,6 +82,11 @@ func (s *EventService) judgeReply(ctx context.Context, msg entity.Message) error
 		logger.Info("触发回复",
 			logger.S("group_id", msg.GroupID), logger.S("user_id", msg.UserID),
 			logger.S("message_id", msg.MessageID), logger.S("reason", string(d.Reason)))
+		// P5-002：标记触发即视为 bot 说话，更新运行态（精力/冷却/连续计数）。失败仅告警，不阻断。
+		if err := s.control.OnReplied(ctx, msg); err != nil {
+			logger.Warn("回复状态记录失败",
+				logger.S("group_id", msg.GroupID), logger.S("user_id", msg.UserID), logger.Err(err))
+		}
 	} else {
 		logger.Debug("未触发回复",
 			logger.S("group_id", msg.GroupID), logger.S("user_id", msg.UserID),

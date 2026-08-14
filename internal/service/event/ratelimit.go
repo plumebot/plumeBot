@@ -41,17 +41,9 @@ func newRateLimiter(cfg config.RateLimitConfig) *rateLimiter {
 	}
 }
 
-// sessionKey 返回限流维度的 key：群消息按群，私聊按用户。
-func sessionKey(msg entity.Message) string {
-	if msg.MessageType == "private" {
-		return "private:" + msg.UserID
-	}
-	return msg.GroupID
-}
-
 // wait 为 msg 排队等待令牌。超时返回 domain.ErrRateLimited（已记录日志）。
 func (r *rateLimiter) wait(ctx context.Context, msg entity.Message) error {
-	key := sessionKey(msg)
+	key := msg.SessionKey()
 
 	r.mu.Lock()
 	lim, ok := r.limit[key]

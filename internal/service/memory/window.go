@@ -25,17 +25,9 @@ func NewWindow() *Window {
 	return &Window{data: make(map[string][]entity.Message)}
 }
 
-// sessionKey 计算消息归属的会话键。
-func sessionKey(msg entity.Message) string {
-	if msg.MessageType == "private" {
-		return "private:" + msg.UserID
-	}
-	return msg.GroupID
-}
-
 // AppendMessage 追加一条消息到会话窗口。达到 WindowCap 上限时淘汰最旧消息并返回压缩触发信号。
 func (w *Window) AppendMessage(_ context.Context, msg entity.Message) (bool, error) {
-	key := sessionKey(msg)
+	key := msg.SessionKey()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 

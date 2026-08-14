@@ -63,7 +63,7 @@ func (s *MemoryService) GetGroupProfile(groupID string) (*entity.GroupProfile, b
 // Compress 触发一次该会话的异步窗口压缩（窗口满时由事件层消费 full 信号调用）。
 // 具体流程见 Compressor：一级压缩 → 热链 → 二级融合/淘汰 → 裁剪窗口。
 func (s *MemoryService) Compress(ctx context.Context, msg entity.Message) {
-	s.compressor.Trigger(ctx, sessionKey(msg))
+	s.compressor.Trigger(ctx, msg.SessionKey())
 }
 
 // GetSummaries 返回会话摘要热链（P6-001 拼 prompt 时拼接，位于人格之后、窗口之前），旧→新。

@@ -17,6 +17,16 @@ type Message struct {
 	// 来源：ZeroBot 事件 IsToMe（P5-001）。不落 SQLite（触发判断只发生在实时事件上，窗口内存保留）。
 }
 
+// SessionKey 返回消息归属的会话键：群聊=GroupID，私聊="private:"+UserID。
+// 避免空 GroupID 的私聊互相串窗/串状态（domain.Memory 会话键、control 运行态 stateKey 统一使用）。
+// 判断以 GroupID 为准：entity.Message 语义「私聊时 GroupID 为空」。
+func (m Message) SessionKey() string {
+	if m.GroupID != "" {
+		return m.GroupID
+	}
+	return "private:" + m.UserID
+}
+
 // PlainText 返回消息的纯文本视图：仅拼接 text 段（不含 @、图片等标记）。
 // 语义与 OneBot 段数组的 ExtractPlainText 一致，供敏感词/命令/短消息忽略等纯文本场景使用。
 func (m Message) PlainText() string {

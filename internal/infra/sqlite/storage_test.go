@@ -177,7 +177,7 @@ func TestMessagesRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGroupConfigRoundTrip 校验 group_config 表 Upsert→Get 往返、覆盖与未命中（P5-001）。
+// TestGroupConfigRoundTrip 校验 group_config 表 Upsert→Get 往返、覆盖与未命中（P5-001/P5-002 扩 12 列）。
 func TestGroupConfigRoundTrip(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
@@ -191,25 +191,31 @@ func TestGroupConfigRoundTrip(t *testing.T) {
 		t.Fatalf("未配置群应返回 ErrNotFound, 实际: %v", err)
 	}
 
-	// Upsert → Get 往返。
-	if err := s.UpsertGroupConfig(ctx, entity.GroupConfig{GroupID: "g1", Mode: "auto"}); err != nil {
+	// Upsert → Get 往返（mode + 10 个状态规则参数全覆盖）。
+	full := entity.GroupConfig{
+		GroupID: "g1", Mode: "auto",
+		EnergyMax: 100, EnergyCost: 10, EnergyRecover: 5, EnergyThreshold: 20,
+		CooldownSeconds: 60, ConsecutiveLimit: 5, RestSeconds: 300,
+		QuietHoursStart: "23:00", QuietHoursEnd: "07:00", ShortMessageChars: 4,
+	}
+	if err := s.UpsertGroupConfig(ctx, full); err != nil {
 		t.Fatalf("UpsertGroupConfig 失败: %v", err)
 	}
 	got, err := s.GetGroupConfig(ctx, "g1")
 	if err != nil {
 		t.Fatalf("GetGroupConfig 失败: %v", err)
 	}
-	if got.GroupID != "g1" || got.Mode != "auto" {
-		t.Errorf("group_config 往返不符: %+v", got)
+	if *got != full {
+		t.Errorf("group_config 往返不符:\n got  %+v\n want %+v", *got, full)
 	}
 
-	// 同 group_id 再 Upsert 覆盖 mode。
+	// 同 group_id 再 Upsert 覆盖：仅改 mode，参数列被覆盖为 0（0 = 走全局兜底语义）。
 	if err := s.UpsertGroupConfig(ctx, entity.GroupConfig{GroupID: "g1", Mode: "mention"}); err != nil {
 		t.Fatalf("UpsertGroupConfig 覆盖失败: %v", err)
 	}
 	got, _ = s.GetGroupConfig(ctx, "g1")
-	if got.Mode != "mention" {
-		t.Errorf("覆盖后 mode 应更新为 mention, 实际 %q", got.Mode)
+	if got.Mode != "mention" || got.EnergyMax != 0 || got.QuietHoursStart != "" {
+		t.Errorf("覆盖后应仅 mode=mention、参数列归 0, 实际 %+v", got)
 	}
 
 	// 群间隔离。

@@ -428,7 +428,10 @@ func (s *Storage) DeletePluginConfig(ctx context.Context, groupID, pluginName st
 
 // UpsertGroupConfig 插入或更新群的静态配置（group_id 冲突时覆盖）。
 func (s *Storage) UpsertGroupConfig(ctx context.Context, cfg entity.GroupConfig) error {
-	_, err := s.db.ExecContext(ctx, sqlUpsertGroupConfig, cfg.GroupID, cfg.Mode)
+	_, err := s.db.ExecContext(ctx, sqlUpsertGroupConfig,
+		cfg.GroupID, cfg.Mode, cfg.EnergyMax, cfg.EnergyCost, cfg.EnergyRecover,
+		cfg.EnergyThreshold, cfg.CooldownSeconds, cfg.ConsecutiveLimit, cfg.RestSeconds,
+		cfg.QuietHoursStart, cfg.QuietHoursEnd, cfg.ShortMessageChars)
 	return err
 }
 
@@ -437,7 +440,9 @@ func (s *Storage) GetGroupConfig(ctx context.Context, groupID string) (*entity.G
 	row := s.db.QueryRowContext(ctx, sqlGetGroupConfig, groupID)
 
 	var c entity.GroupConfig
-	if err := row.Scan(&c.GroupID, &c.Mode); err != nil {
+	if err := row.Scan(&c.GroupID, &c.Mode, &c.EnergyMax, &c.EnergyCost, &c.EnergyRecover,
+		&c.EnergyThreshold, &c.CooldownSeconds, &c.ConsecutiveLimit, &c.RestSeconds,
+		&c.QuietHoursStart, &c.QuietHoursEnd, &c.ShortMessageChars); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, domain.ErrNotFound
 		}

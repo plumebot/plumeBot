@@ -281,6 +281,34 @@ bot 在每个群维护独立状态，纯规则驱动：
 | 时段控制 | 深夜/凌晨不参与对话（除非 @） |
 | 短消息忽略 | <4 字的消息不触发 Agent 判断 |
 
+**规则边界**（P5-002 定案）：五条规则只约束「主动发言」——auto 模式下的普通消息。
+被 @ / 私聊 = 强制回复，绕过全部状态规则（架构 §9.1 的「触发只控制回复」）；mention 模式下规则不生效。
+**拦截 ≠ 丢弃**：被规则拦截的消息已走完 日志→限流→敏感词→持久化（窗口+SQLite）链，只是不进回复路径，仍旁听并缓存（§9.1）。
+
+**参数来源**（优先级）：
+per-group `group_config` 列（非 0/非空）→ 全局 `cfg.Control.state` → 代码默认常量（service/control）。
+
+| 参数 | 全局默认 | 说明 |
+|------|---------|------|
+| `energy_max` | 100 | 精力上限 |
+| `energy_cost` | 10 | 每次回复消耗 |
+| `energy_recover` | 5/分钟 | 精力恢复（惰性计算，读时按整分钟增益，不跑定时器） |
+| `energy_threshold` | 20 | 低于此值不主动说话 |
+| `cooldown_seconds` | 60 | 两次主动回复最小间隔（兼连续计数窗口） |
+| `consecutive_limit` | 5 | 连续回复上限，达此值进入强制休息 |
+| `rest_seconds` | 300 | 连续达上限后的强制休息时长；休息期内主动发言拦（Reason=cooldown），休息内 @ 不延长休息 |
+| `quiet_hours_start/end` | 23:00/07:00 | "HH:MM" 跨午夜约定（end<start 取并集）；start==end = 空段禁用 |
+| `short_message_chars` | 4 | 短消息忽略阈值（按字符数，`PlainText()`） |
+
+**评估序**（auto 模式普通消息）：`short_message` → `quiet_hours`（两者不读 bot_state，短路省查询）→
+`energy` → `cooldown`/连续休息 → `auto_pass`。命中即返回对应 `DecisionReason`
+（`short_message`/`quiet_hours`/`low_energy`/`cooldown`，B-023 定名）。
+
+**运行态**：精力/冷却/连续计数存 `bot_state.state` JSON（`group_state` 结构），每群一条；
+私聊独立一行（key=`"private:"+UserID`，与 §4 会话键一致）。`OnReplied` 在 event 管线
+触发回复时回调（P5-002 起 judgeReply 接线；P6-002 回复真实发出后由发送环节调用），
+消耗精力、记冷却、递增连续计数。主动发言 DB 故障 fail-closed（不主动刷屏）；强制回复不读状态、故障必回。
+
 ---
 
 ## 10. 事件处理管线

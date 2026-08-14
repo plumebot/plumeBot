@@ -37,6 +37,19 @@ const (
 	DefaultLLMProvider       = "openai"                    // provider 空 → openai
 	DefaultOpenAIBaseURL     = "https://api.openai.com/v1" // base_url 空 → 默认端点
 	DefaultLLMTimeoutSeconds = 60                          // timeout_seconds ≤0 → 60
+
+	// 触发控制状态规则默认值（P5-002 起由 service/control 消费，字段 0/空 时兜底；
+	// 与 config.default.yaml control.state 的推荐值一致，改动需双处同步）。
+	DefaultEnergyMax         = 100             // energy_max 空 → 100
+	DefaultEnergyCost        = 10              // energy_cost 空 → 10
+	DefaultEnergyRecover     = 5               // energy_recover 空 → 5（点/分钟）
+	DefaultEnergyThreshold   = 20              // energy_threshold 空 → 20
+	DefaultCooldownSeconds   = 60              // cooldown_seconds 空 → 60
+	DefaultConsecutiveLimit  = 5               // consecutive_limit 空 → 5
+	DefaultRestSeconds       = 300             // rest_seconds 空 → 300
+	DefaultQuietHoursStart   = "23:00"         // quiet_hours_start 空 → "23:00"
+	DefaultQuietHoursEnd     = "07:00"         // quiet_hours_end 空 → "07:00"
+	DefaultShortMessageChars = 4               // short_message_chars 空 → 4
 )
 
 // Config 是应用程序的根配置结构体。
@@ -68,9 +81,29 @@ type LogConfig struct {
 	Level string `mapstructure:"level"` // debug, info, warn, error
 }
 
-// ControlConfig 包含触发控制配置。
+// ControlConfig 包含触发控制配置（P5-001 mode；P5-002 状态规则参数）。
 type ControlConfig struct {
-	Mode string `mapstructure:"mode"` // mention, auto
+	// Mode 触发模式：mention | auto；空 → mention 兜底（消费方）。
+	Mode string `mapstructure:"mode"`
+	// State 状态规则参数全局默认值（P5-002）。0/空 → 代码默认常量兜底（消费方）；
+	// per-group group_config 列非 0/非空 → 覆盖此处。
+	State ControlStateConfig `mapstructure:"state"`
+}
+
+// ControlStateConfig 是状态规则参数（架构 §9.2）的全局默认值。
+// 各字段 0/空 = 未配置，由 service/control 引用下方 DefaultEnergyMax 等默认常量兜底；
+// 每个参数可被 group_config 对应列 per-group 覆盖。
+type ControlStateConfig struct {
+	EnergyMax         int    `mapstructure:"energy_max"`          // 精力上限；0 → DefaultEnergyMax
+	EnergyCost        int    `mapstructure:"energy_cost"`         // 每次回复消耗；0 → DefaultEnergyCost
+	EnergyRecover     int    `mapstructure:"energy_recover"`      // 精力恢复（点/分钟）；0 → DefaultEnergyRecover
+	EnergyThreshold   int    `mapstructure:"energy_threshold"`    // 低于此值不主动说话（@ 除外）；0 → DefaultEnergyThreshold
+	CooldownSeconds   int    `mapstructure:"cooldown_seconds"`    // 两次主动回复最小间隔（秒）；0 → DefaultCooldownSeconds
+	ConsecutiveLimit  int    `mapstructure:"consecutive_limit"`   // 连续回复上限；0 → DefaultConsecutiveLimit
+	RestSeconds       int    `mapstructure:"rest_seconds"`        // 连续达上限强制休息时长（秒）；0 → DefaultRestSeconds
+	QuietHoursStart   string `mapstructure:"quiet_hours_start"`   // 深夜静默起 "HH:MM"；空 → DefaultQuietHoursStart
+	QuietHoursEnd     string `mapstructure:"quiet_hours_end"`     // 深夜静默止 "HH:MM"；空 → DefaultQuietHoursEnd
+	ShortMessageChars int    `mapstructure:"short_message_chars"` // 短消息忽略阈值（<N 字）；0 → DefaultShortMessageChars
 }
 
 // MiddlewareConfig 包含消息管线中间件配置。

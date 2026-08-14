@@ -94,7 +94,7 @@
 | 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 | 状态 |
 |---|---------|------|:---:|------|------|------|:--:|
 | P5-001 | 触发模式 | 实现 mention（仅 @/私聊回复）和 auto（AI 自主判断）模式，每个群可独立配置 | P0 | service/control | P2-002、P2-004 | mention 模式只有被 @ 才回复；auto 模式可通过预检后自主回复 | ✅ |
-| P5-002 | 状态规则 | 实现精力值（消耗/恢复）、冷却时间、连续回复上限、时段控制、短消息忽略；纯规则层，不调 LLM | P0 | service/control | P5-001 完成 | 精力低于阈值不主动说话；连续 N 句后强制冷却；深夜静默 |  |
+| P5-002 | 状态规则 | 实现精力值（消耗/恢复）、冷却时间、连续回复上限、时段控制、短消息忽略；纯规则层，不调 LLM | P0 | service/control | P5-001 完成 | 精力低于阈值不主动说话；连续 N 句后强制冷却；深夜静默 | ✅ |
 
 ---
 
@@ -157,7 +157,8 @@
 | B-033 | P6 | `GetMessages` 私聊维度 | 设计评审 S3 | P6 | 接口加 user_id，私聊按用户区分（当前 `group_id=""` 会混） |
 | B-034 | 后置 | 版本化迁移 | 设计评审 S1 | 生产前 | `schema_migrations` 版本化，替代全量重跑 001（解决加列不生效） |
 | B-035 | 阶段3 | 阶段3 原生多模态（`native_multimodal`）+ 本地路径转 base64 | 设计评审 M4 + 多模态阶段 3 设计 | 阶段3 | `native_multimodal: true` 时 image part 直接进 ChatMessage 喂视觉模型（可选增强：读取后转描述省上下文；可能的对象存储升级后续）；`loadImageBytes` 下沉共享 helper，`ToSchema`/`partCommon` 对本地路径走 base64（默认关，不阻塞；配置字段已占位） |
-| B-036 | P5-002 | per-group 配置内存缓存 | P5-001 设计 | P5-002 优化时 | 热路径每条非命令消息一次 `GetGroupConfig` 单 PK 查询（秒级流量可忽略，P5-001 接受）；如优化，per-group 静态配置（groupID→mode，mode 变更低频）加短 TTL 内存缓存，届时再引入缓存淘汰复杂度 |
+| B-036 | P6-003 | per-group 配置内存缓存 | P5-001 设计 + P5-002 评估 | P6-003 map 治理时 | 热路径每条非命令消息一次 `GetGroupConfig` 单 PK 查询。**P5-002 评估结论**：加 10 列后仍为单 PK 查询（本地 SQLite 纯 Go 驱动，微秒级，秒级流量可忽略）；缓存收益 < 引入的一致性窗口 + 无界 map 淘汰复杂度，维持不缓存。如优化，per-group 静态配置（groupID→mode+rules，变更低频）加短 TTL 内存缓存，与 B-004（ratelimit/Window/ProfileCache/SummaryStore 四个 map）统一在 P6-003 做 LRU/TTL 淘汰 |
+| B-037 | P6-003 | control 运行态并发写无锁 | P5-002 实现说明 | P6-003 稳定性验证 | `service/control` 的 `ShouldReply`/`OnReplied` 读改写 `bot_state` 无锁（单 bot 低流量可接受，P5-002 接受）；消息并发时精力/冷却/连续计数存在读改写竞态。届时评估加 per-group 互斥锁（memory/compress 已有 `inflight` 先例） |
 
 ---
 

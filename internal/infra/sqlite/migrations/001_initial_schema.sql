@@ -129,12 +129,22 @@ CREATE INDEX IF NOT EXISTS idx_conversation_summary_chat
     ON conversation_summary(chat_id, seq);
 
 -- -----------------------------------------------------------------------------
--- 9. group_config — 群静态配置（P5-001）
--- 作用:   每群一条，存 per-group 静态配置（mode 起，后续可扩展精力阈值等）。
---         与 bot_state（运行态 JSON）职责分离；未配置行（group_id 不存在或
---         mode 为空）= 走全局 cfg.Control.Mode 兜底。
+-- 9. group_config — 群静态配置（P5-001 mode 起；P5-002 状态规则参数覆盖）
+-- 作用:   每群一条，存 per-group 静态配置。与 bot_state（运行态 JSON）职责分离；
+--         未配置列（0 或空串）= 走全局 cfg.Control 兜底（mode 空走 cfg.Control.Mode，
+--         参数列 0/空 走 cfg.Control.state）。
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS group_config (
-    group_id TEXT PRIMARY KEY,          -- 群 ID
-    mode     TEXT NOT NULL DEFAULT ''   -- 触发模式：mention | auto；空 = 未配置
+    group_id            TEXT PRIMARY KEY,            -- 群 ID
+    mode                TEXT NOT NULL DEFAULT '',    -- 触发模式：mention | auto；空 = 未配置
+    energy_max          INTEGER NOT NULL DEFAULT 0,  -- 精力上限；0 = 走全局
+    energy_cost         INTEGER NOT NULL DEFAULT 0,  -- 每次回复消耗；0 = 走全局
+    energy_recover      INTEGER NOT NULL DEFAULT 0,  -- 精力恢复（点/分钟）；0 = 走全局
+    energy_threshold    INTEGER NOT NULL DEFAULT 0,  -- 低于此值不主动说话；0 = 走全局
+    cooldown_seconds    INTEGER NOT NULL DEFAULT 0,  -- 主动回复最小间隔（秒）；0 = 走全局
+    consecutive_limit   INTEGER NOT NULL DEFAULT 0,  -- 连续回复上限；0 = 走全局
+    rest_seconds        INTEGER NOT NULL DEFAULT 0,  -- 连续达上限强制休息时长（秒）；0 = 走全局
+    quiet_hours_start   TEXT NOT NULL DEFAULT '',    -- 深夜静默起 "HH:MM"；空 = 走全局
+    quiet_hours_end     TEXT NOT NULL DEFAULT '',    -- 深夜静默止 "HH:MM"；空 = 走全局
+    short_message_chars INTEGER NOT NULL DEFAULT 0   -- 短消息忽略阈值（<N 字）；0 = 走全局
 );
