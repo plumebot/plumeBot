@@ -23,16 +23,14 @@
 
 ### 配置
 
-```bash
-cp config.yaml.example config.yaml
-# 编辑 config.yaml，填写 NapCat WebSocket 地址、模型 API Key 等
-```
+首次运行前编辑 `config.yaml`：缺失时由 `pkg/config` 自动写入嵌入默认模板
+（`config.default.yaml`），再填写 NapCat WebSocket 地址、模型 API Key 等。
 
 ### 编译 & 启动
 
 ```bash
-go build -o plumebot ./cmd/bot/
-./plumebot
+go build -o bot.exe ./cmd/bot/   # Windows 开发机
+./bot.exe
 ```
 
 ## 模块结构
@@ -62,4 +60,4 @@ plumebot/
 
 ## 当前阶段
 
-第五阶段：触发控制（P4 人格与插件已完结）。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。
+第五阶段：触发控制（P5-001/002 已完结）。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。

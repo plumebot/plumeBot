@@ -12,7 +12,7 @@
 | 第二阶段 | 基础设施接入 | ZeroBot 连通 NapCat + eino 可用 + SQLite 落盘 | ✅ |
 | 第三阶段 | 记忆系统 | 上下文窗口 + 画像 + 压缩摘要 | ✅ |
 | 第四阶段 | 人格与插件 | 人格模板化 + 子进程插件加载 | ✅ |
-| 第五阶段 | 触发控制 | mention/auto 模式 + 状态规则 |
+| 第五阶段 | 触发控制 | mention/auto 模式 + 状态规则 | ✅ |
 | 第六阶段 | 联调验收 | 完整消息链路跑通，bot 可对话 |
 
 ---
@@ -155,10 +155,11 @@
 | B-027 | P6-001 | 描述缓存下沉 describer + 预算 | 设计评审 M6 | P6-001 实现 | 缓存下沉 `EinoMediaDescriber` 实现（`contentHash→desc` 并发安全 map）；预算策略组装层定（只描述窗口内 image + 每轮上限） |
 | B-028 | P6-001 | `at` 段组装转文本 | 设计评审 M3-B | P6-001 实现 | service 组装时入站 `Message.Parts`（含 at）→ `ChatMessage.Parts`（at→text）；`ToSchema` at 兜底已完成（原 B-029） |
 | B-033 | P6 | `GetMessages` 私聊维度 | 设计评审 S3 | P6 | 接口加 user_id，私聊按用户区分（当前 `group_id=""` 会混） |
-| B-034 | 后置 | 版本化迁移 | 设计评审 S1 | 生产前 | `schema_migrations` 版本化，替代全量重跑 001（解决加列不生效） |
+| B-034 | 后置 | 版本化迁移 | 设计评审 S1 + P5-002 审查 | 生产前 | `schema_migrations` 版本化，替代全量重跑 001（解决加列不生效）。**P5-002 触发案例**：group_config 扩 10 列时原地改 001，对已存在的旧库（P5-001 时代 2 列）升级会静默失效（migrate 只 `CREATE TABLE IF NOT EXISTS` 不加列，12 列 SELECT 报错 → auto 模式对所有非 @ 群消息静默）。开发期 data/ 为空无影响；生产前必须版本化，并新增独立迁移文件用 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 补列 |
 | B-035 | 阶段3 | 阶段3 原生多模态（`native_multimodal`）+ 本地路径转 base64 | 设计评审 M4 + 多模态阶段 3 设计 | 阶段3 | `native_multimodal: true` 时 image part 直接进 ChatMessage 喂视觉模型（可选增强：读取后转描述省上下文；可能的对象存储升级后续）；`loadImageBytes` 下沉共享 helper，`ToSchema`/`partCommon` 对本地路径走 base64（默认关，不阻塞；配置字段已占位） |
 | B-036 | P6-003 | per-group 配置内存缓存 | P5-001 设计 + P5-002 评估 | P6-003 map 治理时 | 热路径每条非命令消息一次 `GetGroupConfig` 单 PK 查询。**P5-002 评估结论**：加 10 列后仍为单 PK 查询（本地 SQLite 纯 Go 驱动，微秒级，秒级流量可忽略）；缓存收益 < 引入的一致性窗口 + 无界 map 淘汰复杂度，维持不缓存。如优化，per-group 静态配置（groupID→mode+rules，变更低频）加短 TTL 内存缓存，与 B-004（ratelimit/Window/ProfileCache/SummaryStore 四个 map）统一在 P6-003 做 LRU/TTL 淘汰 |
-| B-037 | P6-003 | control 运行态并发写无锁 | P5-002 实现说明 | P6-003 稳定性验证 | `service/control` 的 `ShouldReply`/`OnReplied` 读改写 `bot_state` 无锁（单 bot 低流量可接受，P5-002 接受）；消息并发时精力/冷却/连续计数存在读改写竞态。届时评估加 per-group 互斥锁（memory/compress 已有 `inflight` 先例） |
+| B-038 | P6-002 | OnReplied 接线时序（防重复记账） | P5-002 审查 M2 | P6-002 接发送时 | P5-002 约定「judge 触发即 OnReplied 记账」（标记触发=视为说话，架构 §9.2）。P6-002 真实发送后，OnReplied 应在**发送成功环节**调用并移除 judge 处调用，否则同一消息记两次（能量/冷却/连续重复扣） |
+| B-039 | P6 | P5-002 已知边界 | P5-002 审查 L2/L3/L4 | P6 有需要时 | ①纯图片/媒体消息 auto 模式永不触发（`PlainText()` 空 → short_message 短路，多模态启用后需豁免非 text 段）；②静默时段按服务器本地时区（群成员时区不同时窗口偏移）；③per-group 只配 `quiet_hours_start` 且等于全局 end 时静默被禁用（start==end 空段语义，建议配置侧 warn） |
 
 ---
 

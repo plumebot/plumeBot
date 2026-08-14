@@ -58,6 +58,10 @@ ZeroBot (连接层，只管收发)
 
 ## 4. 记忆系统（三层）
 
+> **会话键约定**：群聊 = `GroupID`，私聊 = `private:`+UserID，贯穿上下文窗口、摘要归档
+> （`conversation_summary.chat_id`）、`bot_state` 运行态与触发控制状态（§9.2）。
+> 统一由 `entity.Message.SessionKey()` 派生（P5-002 消重后单一事实来源）。
+
 ### 4.1 上下文窗口（短期）
 
 - 存储：纯内存，ring buffer（消息全量已持久化到 SQLite messages 表）
@@ -302,7 +306,7 @@ per-group `group_config` 列（非 0/非空）→ 全局 `cfg.Control.state` →
 
 **评估序**（auto 模式普通消息）：`short_message` → `quiet_hours`（两者不读 bot_state，短路省查询）→
 `energy` → `cooldown`/连续休息 → `auto_pass`。命中即返回对应 `DecisionReason`
-（`short_message`/`quiet_hours`/`low_energy`/`cooldown`，B-023 定名）。
+（`short_message`/`quiet_hours`/`low_energy`/`cooldown`，B-023 定名，已完结）。
 
 **运行态**：精力/冷却/连续计数存 `bot_state.state` JSON（`group_state` 结构），每群一条；
 私聊独立一行（key=`"private:"+UserID`，与 §4 会话键一致）。`OnReplied` 在 event 管线
@@ -341,6 +345,9 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
         └── 群聊 → 按触发模式走 Agent / 忽略
 ```
 
+> 注（P6-002 前）：插件分支当前仅校验指令集并记录（§8.6，不发送）；普通消息触发判断只标记 +
+> OnReplied 更新运行态（§9.2），不调 Agent、不发送回复。上图为 P6-002 目标态。
+
 ### 10.3 通知管线（规则处理）
 
 ```
@@ -363,17 +370,20 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 | 表 | 说明 |
 |----|------|
 | messages | 全量群聊消息存储，按 chat_id+时间索引，供关键词检索（后续可扩展向量检索） |
+| conversation_summary | 归档摘要（会话键 chat_id + seq 唯一，重启回灌热链底，见 §4.1） |
 | group_profile | 群画像（1群1条） |
 | group_jargon | 群黑话（1群N条） |
 | member_facts | 成员事实记忆（1人N条；group_id 空=私聊，非空=群聊） |
 | persona | 人格模板（agent 绑定，见 §7） |
-| bot_state | bot 在各群的状态 |
+| bot_state | bot 在各会话的运行态（群=group_id，私聊=`private:`+user_id，P5-002） |
 | plugin_config | 插件在各群的配置 |
-| group_config | 群静态配置（mode 起，P5-001） |
+| group_config | 群静态配置（mode + 状态规则参数 10 列，P5-001/002） |
 
 > 说明：共 9 张表（8 张业务表 + conversation_summary 归档摘要表）。member_profile（个人画像统计）
 > 已于 P3-005 移除——成员上下文由 member_facts 承担；人格为 DB 人格模板（见 §7）。
-> group_config 为 P5-001 新增（per-group 静态配置，与 bot_state 运行态职责分离）。
+> group_config 为 P5-001 新增（per-group 静态配置，与 bot_state 运行态职责分离），P5-002 扩 10
+> 状态参数列（energy_*/cooldown_*/consecutive_*/rest_*/quiet_hours_*/short_message_chars），
+> 0/空 = 走全局 cfg.Control.state 兜底。
 
 ---
 
@@ -478,3 +488,6 @@ NapCat → OneBot WS → ZeroBot
               → 记忆更新 → 状态更新
               → 回复
 ```
+
+> 注（P6-002 前）：当前链路止于「触发判断 + OnReplied 更新运行态」（§9.2），不进入
+> context.Build / Agent 推理 / 回复——回复发送归 P6-002（B-003）。此图为完整目标态。

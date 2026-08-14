@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -28,6 +29,7 @@ type ControlService struct {
 	defaults    ruleConfig     // 全局状态规则参数（cfg.Control.state + 代码默认兜底）
 	store       domain.Storage // 读 per-group group_config（P5-002 起同时读 bot_state 运行态）
 	now         func() time.Time
+	locks       sync.Map // sessionKey → *sync.Mutex：串行化同会话状态读改写（M1，防并发丢更新）
 }
 
 // ruleConfig 是状态规则参数（已合并 per-group 覆盖后的生效值）。
@@ -117,12 +119,17 @@ func (s *ControlService) shouldReplyAuto(ctx context.Context, msg entity.Message
 
 // OnReplied 在 bot 决定回复后回调，维护运行态（P5-002）：消耗精力、记冷却、连续计数，
 // 连续达上限进入强制休息。被 @/私聊 强制回复同样消耗（规则不拦，但状态照记）。
+// 同一会话的状态「读-改-写」以 per-session 锁串行化（M1），防并发触发丢更新/绕过冷却。
 func (s *ControlService) OnReplied(ctx context.Context, msg entity.Message) error {
+	key := msg.SessionKey()
+	l := s.lock(key)
+	l.Lock()
+	defer l.Unlock()
+
 	_, p, err := s.resolveParams(ctx, msg.GroupID)
 	if err != nil {
 		return err
 	}
-	key := msg.SessionKey()
 	st, err := s.loadState(ctx, key)
 	if err != nil {
 		return err
@@ -130,9 +137,10 @@ func (s *ControlService) OnReplied(ctx context.Context, msg entity.Message) erro
 	now := s.now()
 	s.recoverEnergy(&st, p, now)
 
-	// 连续计数：休息期内不递增（防 @ 风暴反复延长休息）；距上次回复超过冷却窗口则重置为 1。
+	// 连续计数：休息期内不递增（防 @ 风暴反复延长休息）；距上次回复 ≥ 冷却窗口则重置为 1
+	// （与 ShouldReply 的「now ≥ LastReplyAt+cooldown 放行」对称，L1 边界统一）。
 	if now.Unix() >= st.RestUntil {
-		if now.Unix()-st.LastReplyAt > p.cooldownSeconds {
+		if now.Unix()-st.LastReplyAt >= p.cooldownSeconds {
 			st.ConsecutiveCount = 1
 		} else {
 			st.ConsecutiveCount++
@@ -277,6 +285,12 @@ func inQuietHours(p ruleConfig, now time.Time) bool {
 		return cur >= p.quietHoursStart || cur < p.quietHoursEnd
 	}
 	return cur >= p.quietHoursStart && cur < p.quietHoursEnd
+}
+
+// lock 返回该会话的互斥锁（并发安全，per-session 只增不删，规模 = 会话数，见 B-004）。
+func (s *ControlService) lock(key string) *sync.Mutex {
+	v, _ := s.locks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // loadState 读取运行态；不存在（ErrNotFound）→ 零值新状态。

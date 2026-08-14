@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,9 +18,10 @@ var noon = time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
 
 // fakeStore 嵌入 domain.Storage，覆写 GetGroupConfig / GetBotState / UpsertBotState。
 // cfgs 中缺失的群 → ErrNotFound；getErr 模拟 GetGroupConfig 故障；
-// getStateErr / setStateErr 模拟 bot_state 读/写故障。
+// getStateErr / setStateErr 模拟 bot_state 读/写故障。states 访问带锁（并发测试安全）。
 type fakeStore struct {
 	domain.Storage
+	mu          sync.Mutex
 	cfgs        map[string]*entity.GroupConfig
 	states      map[string]*entity.BotState
 	getErr      error
@@ -38,6 +40,8 @@ func (f *fakeStore) GetGroupConfig(_ context.Context, groupID string) (*entity.G
 }
 
 func (f *fakeStore) GetBotState(_ context.Context, groupID string) (*entity.BotState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.getStateErr != nil {
 		return nil, f.getStateErr
 	}
@@ -48,6 +52,8 @@ func (f *fakeStore) GetBotState(_ context.Context, groupID string) (*entity.BotS
 }
 
 func (f *fakeStore) UpsertBotState(_ context.Context, st entity.BotState) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.setStateErr != nil {
 		return f.setStateErr
 	}
@@ -66,6 +72,8 @@ func (f *fakeStore) setState(t *testing.T, key string, st groupState) {
 	if err != nil {
 		t.Fatalf("marshal 状态失败: %v", err)
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.states == nil {
 		f.states = map[string]*entity.BotState{}
 	}
@@ -538,5 +546,39 @@ func TestEnergyRefill(t *testing.T) {
 	st.setState(t, "g1", groupState{Energy: 19, EnergyUpdatedAt: noon.Add(-30 * time.Second).Unix(), LastReplyAt: noon.Add(-2 * time.Minute).Unix()})
 	if got, _ := svc.ShouldReply(context.Background(), groupMsg(false)); got.Reason != entity.DecisionReasonLowEnergy {
 		t.Errorf("跨 30 秒不足 1 分钟不恢复, 19<20 应 low_energy, got %+v", got)
+	}
+}
+
+// TestOnRepliedConcurrent 并发 OnReplied 同一会话：per-session 锁串行化读-改-写，
+// 能量精确扣减 10 次（无锁会丢更新导致能量偏高）。
+func TestOnRepliedConcurrent(t *testing.T) {
+	st := &fakeStore{}
+	svc, _ := newTest(config.ControlConfig{Mode: "auto"}, st)
+
+	const n = 10
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := svc.OnReplied(context.Background(), groupMsg(false)); err != nil {
+				t.Errorf("并发 OnReplied 失败: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	st.mu.Lock()
+	bs, ok := st.states["g1"]
+	st.mu.Unlock()
+	if !ok {
+		t.Fatal("并发回复后应有持久化状态")
+	}
+	var gs groupState
+	if err := json.Unmarshal([]byte(bs.State), &gs); err != nil {
+		t.Fatalf("解析状态失败: %v", err)
+	}
+	if want := config.DefaultEnergyMax - n*config.DefaultEnergyCost; gs.Energy != want {
+		t.Errorf("并发 %d 次回复后 Energy 应 = %d（无丢更新）, got %d", n, want, gs.Energy)
 	}
 }

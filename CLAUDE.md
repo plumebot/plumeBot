@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第五阶段：触发控制（P4 人格与插件已完结） |
+| 当前阶段 | 第五阶段：触发控制（P5-001/002 已完结） |
 | 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B 台账，完成即删行） |
 
 ```bash
@@ -24,7 +24,7 @@ go build ./...
 # 静态分析
 go vet ./...
 
-# 测试（已有多包单测：service/event、service/memory、service/agent、infra/onebot、infra/ai、infra/ai/tools、infra/sqlite、pkg/config、pkg/ahocorasick）
+# 测试（已有多包单测：service/event、service/memory、service/agent、service/control、service/plugin、infra/onebot、infra/ai、infra/ai/tools、infra/plugin_exe、infra/imagecache、infra/sqlite、pkg/config、pkg/ahocorasick、pkg/base64util）
 go test ./...
 
 # 运行（连接 NapCat，需先配置 config.yaml 的 onebot.ws_url；缺失配置会自动写入默认模板）
@@ -106,12 +106,15 @@ internal/infra/plugin_exe 做 go-plugin net/rpc 接线（手写 shim，免 proto
 已完成：P5-001 触发模式（mention/auto 双模式，per-group group_config 表可独立配置；
 domain.Control 两方法 ShouldReply→Decision + OnReplied；service/control 模式判定 + event tail
 触发判断接线，只标记不发送，发送归 P6-002，见架构 §9 与 B-003）。
+已完成：P5-002 状态规则（精力/冷却/连续回复/时段/短消息五条纯规则层，不调 LLM；group_config
+扩 10 状态参数列 per-group 覆盖；bot_state 运行态 JSON + OnReplied 接线；会话键统一为
+entity.Message.SessionKey、覆盖逻辑消重，见架构 §9.2）。
 ```
 
 禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：
 
 - 插件回复/动作**执行**（P4-002 只定义协议，回复发送归 P6-002、群管理动作归 B-015，勿提前实装）；
-- 完整 Agent 对话闭环（群聊回复闭环属 P6-002；当前管线末端 tail 仅做持久化（窗口+SQLite）+ 插件命令分发 + P5-001 触发判断（只标记、不发送），Agent 能力由 eino 直调验证）；
+- 完整 Agent 对话闭环（群聊回复闭环属 P6-002；当前管线末端 tail 仅做持久化（窗口+SQLite）+ 插件命令分发 + P5-001/002 触发判断 + 状态规则（只标记、不发送），Agent 能力由 eino 直调验证）；
 - 端到端压测（P6-003）
 
 ## 3. 技术栈
@@ -157,7 +160,7 @@ plumebot/
 │   │   ├── memory.go               #   Memory 接口（P3-001 由 service/memory 实现）
 │   │   ├── plugin.go               #   Plugin 接口（stub）
 │   │   ├── storage.go              #   Storage 接口（P2-001 已实现）
-│   │   ├── control.go              #   Control 接口（P5-001 由 service/control 实现）
+│   │   ├── control.go              #   Control 接口（P5-001/002 由 service/control 实现）
 │   │   └── errors.go               #   哨兵错误 + 参数化错误（SensitiveWordError）
 │   ├── service/                    # 业务编排层，依赖 domain 接口
 │   │   ├── event/                  #   中间件链：日志 → 限流 → 敏感词 → 持久化(tail)
@@ -169,7 +172,7 @@ plumebot/
 │   │   ├── agent/                  #   薄透传：GenerateReply → domain.Agent
 │   │   ├── memory/                 #   上下文窗口 + 群画像缓存 + 窗口压缩（P3-001/002/003 已实现；成员画像已移除）
 │   │   ├── plugin/                 #   stub
-│   │   └── control/                #   触发判断（P5-001 mention/auto 模式，只标记不发送）
+│   │   └── control/                #   触发判断 + 状态规则（P5-001/002，只标记不发送）
 │   ├── handler/                    # 事件处理入口（薄胶水，无业务逻辑）
 │   │   ├── message.go              #   消息事件 → event service
 │   │   └── notice.go               #   通知事件 → 规则处理（stub）
@@ -309,7 +312,7 @@ domain 零依赖
 - 限流：`golang.org/x/time/rate` 令牌桶，按群（私聊按用户）独立，超时返回 `ErrRateLimited`；
 - 敏感词：`pkg/ahocorasick` 匹配，空词表 = 不过滤；
 - 日志中间件记录 message_id/group_id/user_id/message_type/content，日志不重复（infra/onebot 不再打消息 Info）；
-- 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录，不发送，见架构 §10.2）；最后对普通消息做 P5-001 触发判断（control service：mention/auto 模式，只标记触发与否 + 日志，发送归 P6-002 B-003）。
+- 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录，不发送，见架构 §10.2）；最后对普通消息做 P5-001/002 触发判断 + 状态规则（control service：mention/auto 模式 + 精力/冷却/连续/时段/短消息，触发即 OnReplied 更新运行态，只标记不发送，发送归 P6-002 B-003）。
 
 ### 6.4 internal/handler/
 
