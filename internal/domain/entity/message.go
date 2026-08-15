@@ -59,3 +59,36 @@ func (m Message) Render() string {
 	}
 	return sb.String()
 }
+
+// ForLLM 返回消息的 LLM 文本视图（P6-001 B-026）：
+//
+//	text 段原文；at 段 p.Text（"[@qq]"/"[@全体]"）；
+//	image 段 Description 非空 → "（图片：<desc>）"，空 → "[图片]"；
+//	audio/video/file → "[语音]"/"[视频]"/"[文件]"。
+//
+// 压缩 buildLevel1UserPrompt 与 prompt 组装共用（B-028：at 段同样直接转文本，不保留 at part）；
+// Render() 留给日志。
+func (m Message) ForLLM() string {
+	var sb strings.Builder
+	for _, p := range m.Parts {
+		switch p.Type {
+		case PartTypeText, PartTypeAt:
+			sb.WriteString(p.Text)
+		case PartTypeImage:
+			if p.Description != "" {
+				sb.WriteString("（图片：")
+				sb.WriteString(p.Description)
+				sb.WriteString("）")
+			} else {
+				sb.WriteString("[图片]")
+			}
+		case PartTypeAudio:
+			sb.WriteString("[语音]")
+		case PartTypeVideo:
+			sb.WriteString("[视频]")
+		case PartTypeFile:
+			sb.WriteString("[文件]")
+		}
+	}
+	return sb.String()
+}

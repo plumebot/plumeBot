@@ -68,16 +68,18 @@ func main() {
 		logger.Fatal("注册 forget_fact 失败", logger.Err(err))
 	}
 
-	// P4-001 人格模板：按 cfg.Agent.Name 加载 DB 人格模板，其 system_prompt 覆盖
-	// config.agent.system_prompt 后交给 provider 工厂（工厂对空值兜底 DefaultSystemPrompt）。
-	// 默认 agent 无模板则 seed 一条默认模板（固化当前生效人设，之后改 DB 重启生效）。
+	// P4-001 人格模板 + P6-001 运行时生效：
+	// persona 模板按 cfg.Agent.Name 由 service/memory BuildMessages 每次组装现查注入 system 消息
+	//（改 persona 表即时生效，无需重启）。此处仅启动 seed（默认 agent 无模板则固化当前生效人设）
+	// 与计算 defaultPersona（组装兜底）；cfg.Agent.SystemPrompt 置空使 Instruction 为空，
+	// 人格不再经 infra 注入（见 provider 工厂注释）。
 	agentName := cfg.Agent.Name
 	if agentName == "" {
 		agentName = config.DefaultAgentName
 	}
-	persona, err := storageInfra.GetPersonaByAgent(ctx, agentName)
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
+	personaFound := true
+	if _, err := storageInfra.GetPersonaByAgent(ctx, agentName); errors.Is(err, domain.ErrNotFound) {
+		personaFound = false
 		prompt := cfg.Agent.SystemPrompt
 		if prompt == "" {
 			prompt = config.DefaultSystemPrompt
@@ -85,13 +87,24 @@ func main() {
 		if _, err := storageInfra.InsertPersona(ctx, entity.Persona{Agent: agentName, Name: agentName, SystemPrompt: prompt}); err != nil {
 			logger.Fatal("seed 默认人格模板失败", logger.Err(err))
 		}
-		cfg.Agent.SystemPrompt = prompt
-	case err != nil:
+	} else if err != nil {
 		logger.Fatal("加载人格模板失败", logger.Err(err))
-	case persona.SystemPrompt != "":
-		// 模板非空才覆盖；空模板（如人工清空）保留 config 值，兜底链仍成立。
-		cfg.Agent.SystemPrompt = persona.SystemPrompt
 	}
+	// P6-001 审查 BUG-4：persona 表是人格唯一生效来源，config.agent.system_prompt 仅作兜底。
+	// 启动时提示，避免用户改 config 后困惑「改了不生效」。
+	if personaFound {
+		logger.Info("人格来自 DB persona 表，由组装现查（改 persona 表即时生效；config.agent.system_prompt 仅作兜底）",
+			logger.S("agent", agentName))
+	} else {
+		logger.Info("已 seed 默认人格模板，由组装现查（改 persona 表即时生效）", logger.S("agent", agentName))
+	}
+
+	// P6-001：defaultPersona 作为组装兜底传给 NewMemoryService；Instruction 置空（人格走组装）。
+	defaultPersona := cfg.Agent.SystemPrompt
+	if defaultPersona == "" {
+		defaultPersona = config.DefaultSystemPrompt
+	}
+	cfg.Agent.SystemPrompt = ""
 
 	agentInfra, err := llmRegistry.NewAgent(ctx, *cfg)
 	if err != nil {
@@ -102,7 +115,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("初始化摘要器失败", logger.Err(err))
 	}
-	// 阶段2 图片描述器：vision_model 配置时启用，P6 装配经 BuildContext 惰性调用；
+	// 阶段2 图片描述器：vision_model 配置时启用，P6-001 组装经 BuildMessages 惰性调用；
 	// vision_model 为空 → 描述关闭（nil），图片只落 [图片] 占位。
 	var describerInfra domain.MediaDescriber
 	if _, ok := cfg.LLM.VisionEntry(); ok {
@@ -110,6 +123,10 @@ func main() {
 		if err != nil {
 			logger.Fatal("初始化图片描述器失败", logger.Err(err))
 		}
+	} else if cfg.LLM.VisionModel != "" {
+		// P6-001 审查 BUG-5：vision_model 填了但未命中 models 条目 → 描述静默关闭，显式告警。
+		logger.Warn("llm.vision_model 已配置但未指向任何 models 条目，图片描述关闭（检查 models 列表的 name）",
+			logger.S("vision_model", cfg.LLM.VisionModel))
 	}
 	// P4-002 插件系统：go-plugin 子进程（stdio）。service/plugin 经注入的工厂拉起插件进程，
 	// 避免 service 直接依赖 infra。协议见架构 §8.6：只定义协议 + 宿主校验，不执行回复/动作。
@@ -123,7 +140,16 @@ func main() {
 
 	// 3. 注入 service
 	agentSvc := agent.NewAgentService(agentInfra)
-	memorySvc := memory.NewMemoryService(memory.NewWindow(), storageInfra, summarizerInfra, describerInfra)
+	// P6-001：组装器注入（builder 携带组装预算 llm.prompt + persona 查询键 + 兜底人设）。
+	memorySvc := memory.NewMemoryService(
+		memory.NewWindow(), storageInfra, summarizerInfra,
+		memory.BuilderConfig{
+			Prompt:         cfg.LLM.Prompt,
+			AgentName:      agentName,
+			DefaultPersona: defaultPersona,
+		},
+		describerInfra,
+	)
 	// P5-001 触发控制：注入全局 cfg.Control.Mode（空 → mention 兜底）与存储（读 per-group group_config）。
 	controlSvc := control.NewControlService(cfg.Control, storageInfra)
 	eventSvc := event.NewEventService(agentSvc, memorySvc, pluginSvc, controlSvc, cfg.Middleware)

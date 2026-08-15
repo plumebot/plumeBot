@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
@@ -106,6 +107,113 @@ func TestEinoMediaDescriberMissingFile(t *testing.T) {
 	if _, err := d.Describe(context.Background(),
 		entity.ContentPart{Type: entity.PartTypeImage, URL: filepath.Join(t.TempDir(), "nope.png")}); err == nil {
 		t.Fatal("本地文件不存在应报错")
+	}
+}
+
+// TestEinoMediaDescriberCacheHit 同图（同 Base64）两次 Describe → 模型只调 1 次（B-027）。
+func TestEinoMediaDescriberCacheHit(t *testing.T) {
+	fake := &fakeChatModel{script: []*schema.Message{
+		schema.AssistantMessage("一只猫。", nil),
+	}}
+	d := &EinoMediaDescriber{cm: fake, http: &http.Client{}}
+	part := entity.ContentPart{Type: entity.PartTypeImage, Base64: testPNGBase64}
+
+	first, err := d.Describe(context.Background(), part)
+	if err != nil {
+		t.Fatalf("首次 Describe 失败: %v", err)
+	}
+	second, err := d.Describe(context.Background(), part)
+	if err != nil {
+		t.Fatalf("二次 Describe 失败: %v", err)
+	}
+	if first != second {
+		t.Errorf("缓存命中应返回一致描述: %q vs %q", first, second)
+	}
+	if len(fake.inputs) != 1 {
+		t.Errorf("同图缓存命中应只调模型 1 次, 实际 %d", len(fake.inputs))
+	}
+}
+
+// TestEinoMediaDescriberCacheKeyIsolation 不同来源键不共享缓存：相同内容 URL(本地路径) vs Base64。
+func TestEinoMediaDescriberCacheKeyIsolation(t *testing.T) {
+	// 本地临时图：同 testPNG 内容，避免测试触发真实网络。
+	path := filepath.Join(t.TempDir(), "cat.png")
+	if err := os.WriteFile(path, mustDecodePNG(t), 0o644); err != nil {
+		t.Fatalf("写测试图片失败: %v", err)
+	}
+	fake := &fakeChatModel{script: []*schema.Message{
+		schema.AssistantMessage("一只猫。", nil),
+		schema.AssistantMessage("一只猫。", nil),
+	}}
+	d := &EinoMediaDescriber{cm: fake, http: &http.Client{}}
+
+	// URL(路径) 与 Base64 不同键 → 各调一次模型（2 次）。
+	if _, err := d.Describe(context.Background(),
+		entity.ContentPart{Type: entity.PartTypeImage, URL: path}); err != nil {
+		t.Fatalf("URL Describe 失败: %v", err)
+	}
+	if _, err := d.Describe(context.Background(),
+		entity.ContentPart{Type: entity.PartTypeImage, Base64: testPNGBase64}); err != nil {
+		t.Fatalf("Base64 Describe 失败: %v", err)
+	}
+	if len(fake.inputs) != 2 {
+		t.Errorf("URL 与 Base64 应各自触发模型调用, 实际 %d", len(fake.inputs))
+	}
+
+	// 同 URL 再调 → 缓存命中，不新增调用。
+	if _, err := d.Describe(context.Background(),
+		entity.ContentPart{Type: entity.PartTypeImage, URL: path}); err != nil {
+		t.Fatalf("同 URL Describe 失败: %v", err)
+	}
+	if len(fake.inputs) != 2 {
+		t.Errorf("同 URL 应缓存命中, 实际模型调用 %d", len(fake.inputs))
+	}
+}
+
+// TestImageContentKey 校验内容键规则：Base64 按 md5 内容寻址，URL 按串。
+func TestImageContentKey(t *testing.T) {
+	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage, Base64: testPNGBase64}); got == "" || got[:4] != "b64:" {
+		t.Errorf("Base64 键应带 b64: 前缀, 实际 %q", got)
+	}
+	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage, URL: "u"}); got != "url:u" {
+		t.Errorf("URL 键应按串, 实际 %q", got)
+	}
+	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage}); got != "" {
+		t.Errorf("URL/Base64 皆空应返回空键, 实际 %q", got)
+	}
+}
+
+// TestEinoMediaDescriberFailCooldown 描述失败记冷却（审查 BUG-3）：同一失败图片在冷却期内
+// 直接返回失败，不再触发拉图/模型调用（防每轮组装重试风暴）。
+func TestEinoMediaDescriberFailCooldown(t *testing.T) {
+	d := &EinoMediaDescriber{cm: &fakeChatModel{}, http: &http.Client{}}
+	missing := entity.ContentPart{Type: entity.PartTypeImage, URL: filepath.Join(t.TempDir(), "nope.png")}
+
+	first, err := d.Describe(context.Background(), missing)
+	if err == nil || !strings.Contains(err.Error(), "读取本地图片") {
+		t.Fatalf("首次应报拉图失败, 实际 %q", err)
+	}
+	_ = first
+	if len(d.fails) != 1 {
+		t.Fatalf("失败应记冷却条目, 实际 %d 条", len(d.fails))
+	}
+
+	// 冷却期内再调同图 → 直接失败，错误为冷却信息而非重新拉图。
+	second, err := d.Describe(context.Background(), missing)
+	if err == nil || !strings.Contains(err.Error(), "失败冷却") {
+		t.Errorf("冷却期内应直接返回失败（不重新拉图）: %v", err)
+	}
+	_ = second
+}
+
+// TestEinoMediaDescriberNoFailKeyNoCooldown URL/Base64 皆空的 part 无键，失败不记冷却。
+func TestEinoMediaDescriberNoFailKeyNoCooldown(t *testing.T) {
+	d := &EinoMediaDescriber{cm: &fakeChatModel{}, http: &http.Client{}}
+	if _, err := d.Describe(context.Background(), entity.ContentPart{Type: entity.PartTypeImage}); err == nil {
+		t.Fatal("URL 与 Base64 均为空应报错")
+	}
+	if len(d.fails) != 0 {
+		t.Errorf("无键失败不应记冷却, 实际 %d 条", len(d.fails))
 	}
 }
 

@@ -30,7 +30,9 @@ const (
 	// Agent 默认值（消费方兜底，P2-004 阶段 5 起由 infra/ai 消费）。
 	DefaultAgentName        = "PlumeBot"                      // agent.name 空 → 默认标识
 	DefaultAgentDescription = "PlumeBot：QQ 群聊 AI 机器人，负责对话回复。" // agent.description 空 → 默认描述
-	// DefaultSystemPrompt 是机器人系统提示词的占位文案（人设占位，P4 人格系统前使用）。
+	// DefaultSystemPrompt 是机器人系统提示词的占位文案（P6-001 起作为 persona 兜底人设：
+	// persona 模板 → config.agent.system_prompt（defaultPersona）→ 本默认值，由 service/memory
+	// 组装 personaText 与 main 启动 seed 消费，勿删）。
 	DefaultSystemPrompt = "你是 PlumeBot，一个活跃在 QQ 群聊中的 AI 赛博群友。你语气自然友好，用简体中文回复，内容简洁，贴合聊天语境。"
 
 	// LLM 接入默认值（阶段 4 起由 infra/ai 消费，空值/非法值在消费方兜底）。
@@ -40,16 +42,23 @@ const (
 
 	// 触发控制状态规则默认值（P5-002 起由 service/control 消费，字段 0/空 时兜底；
 	// 与 config.default.yaml control.state 的推荐值一致，改动需双处同步）。
-	DefaultEnergyMax         = 100             // energy_max 空 → 100
-	DefaultEnergyCost        = 10              // energy_cost 空 → 10
-	DefaultEnergyRecover     = 5               // energy_recover 空 → 5（点/分钟）
-	DefaultEnergyThreshold   = 20              // energy_threshold 空 → 20
-	DefaultCooldownSeconds   = 60              // cooldown_seconds 空 → 60
-	DefaultConsecutiveLimit  = 5               // consecutive_limit 空 → 5
-	DefaultRestSeconds       = 300             // rest_seconds 空 → 300
-	DefaultQuietHoursStart   = "23:00"         // quiet_hours_start 空 → "23:00"
-	DefaultQuietHoursEnd     = "07:00"         // quiet_hours_end 空 → "07:00"
-	DefaultShortMessageChars = 4               // short_message_chars 空 → 4
+	DefaultEnergyMax         = 100     // energy_max 空 → 100
+	DefaultEnergyCost        = 10      // energy_cost 空 → 10
+	DefaultEnergyRecover     = 5       // energy_recover 空 → 5（点/分钟）
+	DefaultEnergyThreshold   = 20      // energy_threshold 空 → 20
+	DefaultCooldownSeconds   = 60      // cooldown_seconds 空 → 60
+	DefaultConsecutiveLimit  = 5       // consecutive_limit 空 → 5
+	DefaultRestSeconds       = 300     // rest_seconds 空 → 300
+	DefaultQuietHoursStart   = "23:00" // quiet_hours_start 空 → "23:00"
+	DefaultQuietHoursEnd     = "07:00" // quiet_hours_end 空 → "07:00"
+	DefaultShortMessageChars = 4       // short_message_chars 空 → 4
+
+	// Prompt 组装预算/上限默认值（P6-001，架构 §6，B-014/B-027；字段 ≤0 时消费方兜底；
+	// 与 config.default.yaml llm.prompt 的推荐值一致，改动需双处同步）。
+	DefaultFactsPerMember       = 3  // facts_per_member ≤0 → 3（窗口内每成员事实条数上限）
+	DefaultJargonCap            = 20 // jargon_cap ≤0 → 20（confirmed 黑话条数上限）
+	DefaultDescribeRecentRounds = 5  // describe_recent_rounds ≤0 → 5（只描述窗口最近 N 轮消息的图片）
+	DefaultDescribePerTurnCap   = 10 // describe_per_turn_cap ≤0 → 10（每条消息图片描述条数上限）
 )
 
 // Config 是应用程序的根配置结构体。
@@ -132,6 +141,17 @@ type LLMConfig struct {
 	ChatModel string `mapstructure:"chat_model"`
 	// VisionModel 引用 Models[].name 指定图片描述模型；空 = 描述关闭。
 	VisionModel string `mapstructure:"vision_model"`
+	// Prompt 是 prompt 组装（BuildMessages，P6-001）的上限/预算参数。
+	Prompt PromptConfig `mapstructure:"prompt"`
+}
+
+// PromptConfig 是 prompt 组装（P6-001，架构 §6）的注入上限/预算参数。
+// 字段 ≤0 = 未配置，由 service/memory 按上方 DefaultFactsPerMember 等默认常量兜底（消费方兜底纪律）。
+type PromptConfig struct {
+	FactsPerMember       int `mapstructure:"facts_per_member"`       // 窗口内每成员事实条数上限；≤0 → DefaultFactsPerMember（B-014）
+	JargonCap            int `mapstructure:"jargon_cap"`             // confirmed 黑话条数上限；≤0 → DefaultJargonCap（B-014）
+	DescribeRecentRounds int `mapstructure:"describe_recent_rounds"` // 只描述窗口最近 N 轮消息的图片；≤0 → DefaultDescribeRecentRounds（B-027）
+	DescribePerTurnCap   int `mapstructure:"describe_per_turn_cap"`  // 每条消息图片描述条数上限；≤0 → DefaultDescribePerTurnCap（B-027）
 }
 
 // LLMModelConfig 是单个模型条目的端点配置（OpenAI 兼容接口）。
@@ -196,7 +216,8 @@ type AgentConfig struct {
 	Name string `mapstructure:"name"`
 	// Description 能力描述（adk 元数据，multi-agent 场景供其他 agent 判断是否转移任务）；空 → DefaultAgentDescription。
 	Description string `mapstructure:"description"`
-	// SystemPrompt 系统提示词（经 ChatModelAgentConfig.Instruction 注入，固定人设）；空 → DefaultSystemPrompt。
+	// SystemPrompt 系统提示词（P6-001 起不再经 Instruction 注入，作为组装兜底 defaultPersona，
+	// 由 service/memory BuildMessages 在 persona 模板未命中/空时使用）；空 → DefaultSystemPrompt。
 	SystemPrompt string `mapstructure:"system_prompt"`
 }
 

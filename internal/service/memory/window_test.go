@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"strconv"
+	"sync"
 	"testing"
 
 	"plumebot/internal/domain/entity"
@@ -149,5 +150,42 @@ func TestWindowRemoveByIDsPreservesConcurrentAdds(t *testing.T) {
 	got, _ := w.GetWindow(context.Background(), "g1")
 	if len(got) != 2 || got[0].MessageID != "5" || got[1].MessageID != "6" {
 		t.Errorf("压缩期追加的新消息不应被移除, 实际: %+v", got)
+	}
+}
+
+// TestWindowConcurrentSessions 并发操作不同会话（群 g0~g7）：每会话独立锁互不阻塞，
+// 无数据竞态（-race 下执行），且各会话窗口隔离不串。单会话内仍保序。
+func TestWindowConcurrentSessions(t *testing.T) {
+	w := NewWindow()
+	ctx := context.Background()
+	const groups = 8
+	const perGroup = 100
+
+	var wg sync.WaitGroup
+	for g := 0; g < groups; g++ {
+		wg.Add(1)
+		go func(group string) {
+			defer wg.Done()
+			for i := 0; i < perGroup; i++ {
+				m := groupMsg(group, "m")
+				m.MessageID = group + "-" + strconv.Itoa(i)
+				if _, err := w.AppendMessage(ctx, m); err != nil {
+					t.Errorf("会话 %s 追加失败: %v", group, err)
+					return
+				}
+				if _, err := w.GetWindow(ctx, group); err != nil {
+					t.Errorf("会话 %s 读取失败: %v", group, err)
+					return
+				}
+			}
+		}("g" + strconv.Itoa(g))
+	}
+	wg.Wait()
+
+	for g := 0; g < groups; g++ {
+		got, _ := w.GetWindow(ctx, "g"+strconv.Itoa(g))
+		if len(got) != perGroup {
+			t.Errorf("会话 %d 窗口长度 = %d, want %d", g, len(got), perGroup)
+		}
 	}
 }

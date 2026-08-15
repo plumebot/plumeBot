@@ -175,11 +175,13 @@ const systemFusePrompt = `你是群聊长期记忆的融合助手。你会收到
 {"summary":"不超过 200 字的中文综合摘要","keywords":["3 到 5 个关键词"],"decisions":["关键决定或重要共识；没有则留空数组"]}`
 
 // buildLevel1UserPrompt 把压缩批次格式化为待摘要的群聊记录文本。
+// 用 ForLLM 文本视图（P6-001 B-026）：text+at 原文 + 图片描述（无则 [图片]），
+// 与 prompt 组装共用；Render() 留给日志。
 func buildLevel1UserPrompt(batch []entity.Message) string {
 	var sb strings.Builder
 	sb.WriteString("以下是群聊记录（按时间顺序，每条为「发送者QQ号 + 内容」）：\n")
 	for i, m := range batch {
-		fmt.Fprintf(&sb, "%d [%s]: %s\n", i+1, m.UserID, m.Render())
+		fmt.Fprintf(&sb, "%d [%s]: %s\n", i+1, m.UserID, m.ForLLM())
 	}
 	return sb.String()
 }

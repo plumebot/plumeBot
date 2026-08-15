@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第五阶段：触发控制（P5-001/002 已完结） |
+| 当前阶段 | 第六阶段：联调验收（P6-001 Prompt 组装已完结） |
 | 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B 台账，完成即删行） |
 
 ```bash
@@ -75,13 +75,14 @@ PlumeBot
 当前阶段：
 
 ```text
-第五阶段：触发控制
+第六阶段：联调验收
 ```
 
 本阶段目标：
 
 ```text
-mention/auto 双模式切换，精力/冷却/连续回复规则生效（P5-001/002）。
+完整消息链路跑通，bot 可对话（P6-002：触发判断 → 拼 prompt → Agent 推理 → 回复 → 记忆更新）。
+已完成：P6-001 Prompt 组装联调（五段组装 BuildMessages，见下方完成记录）。
 已完成：第一阶段（项目骨架）、第二阶段（基础设施接入）——
 P2-001 SQLite 存储层、P2-002 ZeroBot 连接层、P2-003 消息中间件链
 （日志 → 限流 → 敏感词过滤，敏感词为 Aho-Corasick 实装）、
@@ -98,17 +99,22 @@ member_facts/group_jargon；黑话 pending/confirmed 状态机；会话身份经
 persona 重构为 agent 绑定人格模板，见架构 §7）。
 已完成：P4-001 人格系统（按 cfg.Agent.Name 从 persona 表加载人格模板 GetPersonaByAgent，其 system_prompt
 经覆盖 config.agent.system_prompt 后交 provider 工厂兜底（模板 → config.agent.system_prompt → DefaultSystemPrompt），
-经 Instruction 注入；默认 agent 无模板则 seed 一条默认模板固化当前生效人设；组装在 main 侧，infra/ai 零改动，见架构 §7）。
+经 Instruction 注入；默认 agent 无模板则 seed 一条默认模板固化当前生效人设；组装在 main 侧，infra/ai 零改动，
+见架构 §7。注：Instruction 注入已由 P6-001 修订为 service 组装注入 system 消息，见 §5.6）。
 已完成：P4-002 插件系统（go-plugin 子进程 + 指令集协议：entity.PluginRequest/PluginResult{Reply, Actions}，
 internal/infra/plugin_exe 做 go-plugin net/rpc 接线（手写 shim，免 protoc），host 侧 service/plugin 发现路由（plugin.json）+ 命令分发分支；
 只定义协议 + 宿主校验（ValidatePluginResult），不执行回复/动作，见架构 §8.6 与 B-017）。
-已完成：第四阶段（人格与插件）全部完结，进入第五阶段。
+已完成：第四阶段（人格与插件）全部完结，进入第六阶段。
 已完成：P5-001 触发模式（mention/auto 双模式，per-group group_config 表可独立配置；
 domain.Control 两方法 ShouldReply→Decision + OnReplied；service/control 模式判定 + event tail
 触发判断接线，只标记不发送，发送归 P6-002，见架构 §9 与 B-003）。
 已完成：P5-002 状态规则（精力/冷却/连续回复/时段/短消息五条纯规则层，不调 LLM；group_config
 扩 10 状态参数列 per-group 覆盖；bot_state 运行态 JSON + OnReplied 接线；会话键统一为
 entity.Message.SessionKey、覆盖逻辑消重，见架构 §9.2）。
+已完成：第六阶段 P6-001 Prompt 组装联调（service/memory BuildMessages 五段组装：
+persona(现查 persona 表，改库即时生效) + 会话画像(群画像+成员事实+confirmed 黑话，注入上限
+llm.prompt) + 历史摘要 → system，窗口④ + 当前消息⑤；at→text、图片惰性描述(describer 缓存+预算)
++ 描述写回 UpdateMessageParts；persona 不再经 Instruction 注入，见架构 §6/§7.3 与 §5.6）。
 ```
 
 禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：
@@ -270,10 +276,11 @@ domain 零依赖
 - **发送能力在 infra/onebot**：ZeroBot 的 `ctx` 只在连接层可见（无 CtxFromEvent，`zero.GetBot` 拿到的 Ctx 的 Event 为 nil，只能用于 SendGroupMessage/SendPrivateMessage/CallAction）。限流/敏感词命中由 matcher 内 `ctx.Send` 固定文案回复（`rateLimitedReply`/`sensitiveWordReply` 常量）。Agent 回复采用**方案 B：Sender 注入 ctx**——matcher 闭包构造 per-event 的 `domain.Sender`（持有 `*zero.Ctx`）经 `domain.WithSender` 注入，Handler 链签名保持 `(ctx,msg) error`，需回复的环节 `domain.SenderFrom(ctx).Send(entity.Reply)` 直接发送，载荷结构化（多模态 + 引用回复 + @，见 roadmap B-003）。`domain.Sender` 不含动作能力（禁言/踢人等经 `domain.GroupManager` 供 agent tool 调用，见 B-015）；非响应式主动发送（异步插件、定时、P5 auto 后续发言）需显式目标，届时另定义 `SendTo` 形态并 main 注入。
 - **连接层无事件级 context**：onebot 适配层传 `context.Background()`；service Handler 已预留 ctx 参数（B-007，未来仅改 onebot 一处）。
 - **LLM provider 注册中心为注入式实例**（P2-004）：`ai.Registry` 经 main 组装注入，非包级全局单例；`Factory func(ctx, config.Config) (domain.Agent, error)` 接收**完整 Config**（LLM 段 + Tools 段在工厂内组装）；工具表经 `NewOpenAIFactory(tr *ToolsRegistry)` 闭包注入（Factory 签名固定）。
-- **Agent 实现细节**（P2-004，`internal/infra/ai`）：`EinoAgent` 封装 eino v0.8.13 的 `adk.ChatModelAgent` —— `Instruction` 注入固定人设、`Name`/`Description` 填 adk 元数据（为将来多 agent `NewAgentTool` 做准备）、`MaxIterations=20`（tool 循环上限）、仅当启用工具时才注入 `ToolsConfig`。工具挂在注入式 `ToolsRegistry` 上（无全局状态），`Register` 拒绝重复名。
-- **人格=DB 人格模板、人格选择 agent，经 Instruction 注入，不进 agent 层**（P2-004 方案 A' + P4-001 定案）：persona 表（agent 绑定字段 + name + system_prompt，无 userid/groupid/extend，见架构 §7）按 `cfg.Agent.Name` 加载模板，其 system_prompt 覆盖 `config.agent.system_prompt` 后由 provider 工厂兜底（空 → `config.DefaultSystemPrompt`）经 `ChatModelAgentConfig.Instruction` 注入；`domain.Agent.Generate` 收完整消息列表，infra 零改动。不在 agent 配置中写人格 id（配置只有 agent.name）。
-- **agent 三要素配置化，多 agent 平滑演进**（P2-004）：`agent.name/description/system_prompt`（空值兜底 `config.DefaultAgentName/DefaultAgentDescription/DefaultSystemPrompt`；persona 模板可覆盖 system_prompt，见上条）；`agent.name` 是 adk 元数据标识（multi-agent 路由），与 `bot.name`（QQ 展示名）语义独立不耦合；未来多 agent 演进为 `agents.list[]` + `active` 选择（每项一份三要素，LLM 保持全局 provider 注册中心），本期不实现。
+- **Agent 实现细节**（P2-004，`internal/infra/ai`）：`EinoAgent` 封装 eino v0.8.13 的 `adk.ChatModelAgent` —— `Instruction` 通常为空（P6-001 起人格由 service 组装注入 system 消息，见下条）、`Name`/`Description` 填 adk 元数据（为将来多 agent `NewAgentTool` 做准备）、`MaxIterations=20`（tool 循环上限）、仅当启用工具时才注入 `ToolsConfig`。工具挂在注入式 `ToolsRegistry` 上（无全局状态），`Register` 拒绝重复名。
+- **人格=DB 人格模板、人格选择 agent，P6-001 起由 service 组装注入 system 消息，不进 infra/agent 层**（P2-004 方案 A' + P4-001 定案 → P6-001 修订，原 Instruction 注入因「改库需重启」不能满足运行时生效而废弃）：persona 表（agent 绑定字段 + name + system_prompt，无 userid/groupid/extend，见架构 §7）按 `cfg.Agent.Name` 由 `service/memory BuildMessages` 每次组装现查（`GetPersonaByAgent`）注入首条 system 消息，**改 persona 表即时生效**；main 侧 `cfg.Agent.SystemPrompt` 置空使 `Instruction` 为空、provider 工厂不再兜底 `DefaultSystemPrompt`；兜底链：模板 `system_prompt` → `config.agent.system_prompt`（`defaultPersona`，main 传入组装器）→ `DefaultSystemPrompt`。不在 agent 配置中写人格 id（配置只有 agent.name）。
+- **agent 三要素配置化，多 agent 平滑演进**（P2-004）：`agent.name/description`（空值兜底 `config.DefaultAgentName/DefaultAgentDescription`）；`system_prompt` 空值时由组装器兜底 `defaultPersona`（`config.agent.system_prompt`）→ `DefaultSystemPrompt`（见上条）；`agent.name` 是 adk 元数据标识（multi-agent 路由），与 `bot.name`（QQ 展示名）语义独立不耦合；未来多 agent 演进为 `agents.list[]` + `active` 选择（每项一份三要素，LLM 保持全局 provider 注册中心），本期不实现。
 - **模板不替代 memory**（P2-004 评审）：eino ChatTemplate/StateModifier **不引入**（service 层不能 import infra 类型；组装逻辑不进 infra）；memory 存结构化数据不做渲染（同一数据源多渲染目标）；prompt 组装在 service 层（P6-001 完整五段），摘要压缩 prompt 归 service/memory（P3-003）。
+- **窗口/状态按会话分锁，跨会话互不阻塞**（P6-001 审查定案）：`Window`（service/memory）与 `ControlService`（service/control）对**同一会话**的读-改写以 per-session 锁串行化（`sync.Map` 注册表 + 每会话 `sync.Mutex`），**不同群/私聊互不阻塞**、跨会话天然并行（持锁绝不含 LLM/IO）。注意此锁**不覆盖** `GetWindow` 浅拷贝逃逸出的 Parts 数组——同会话 BuildMessages 与窗口压缩的数组读写约束见 roadmap B-040（P6-002 接线时落实）。
 - **插件形态 = 子进程 stdio，.so 废弃，go-plugin 定案**（P4-002 前置定案）：Go `plugin` 包（`-buildmode=plugin` / `plugin.Open()`）仅支持 Linux/FreeBSD/macOS——Windows 开发机不可用、禁交叉编译；且无卸载 API（非真热，只能热添加）、与主程序同进程（panic 拖垮整个 bot）、插件需与主程序完全同版本编译。插件统一为**独立进程 + stdio 通信**（HashiCorp go-plugin，net/rpc 变体，免 protoc）：跨平台、进程隔离、真热重载（重启子进程）。插件遵循**指令集协议**（§8.6）——`entity.PluginRequest{Command, Args, Session}` → `entity.PluginResult{Reply, Actions}`，插件零权限只声明意图、宿主唯一执行者；`domain.Plugin` 签名为 `Execute(ctx, entity.PluginRequest) (entity.PluginResult, error)`。**P4-002 只定义协议 + 宿主校验，不执行**：回复发送归 P6-002（B-003 Sender），群管理动作执行归 B-015（GroupManager + 护栏）。
 
 ## 6. 模块说明

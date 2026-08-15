@@ -11,6 +11,9 @@ type Storage interface {
 	// ── messages ──
 	SaveMessage(ctx context.Context, msg entity.Message) error
 	GetMessages(ctx context.Context, groupID string, limit int, offset int) ([]entity.Message, error)
+	// UpdateMessageParts 覆盖一条消息的内容段（P6-001 B-025：图片描述写回 messages.parts）。
+	// 幂等：message_id 不存在时不做任何事、不报错。
+	UpdateMessageParts(ctx context.Context, messageID string, parts []entity.ContentPart) error
 
 	// ── conversation_summary ──
 	// SaveSummary 归档一条摘要（(chat_id, seq) 冲突时覆盖，幂等）。

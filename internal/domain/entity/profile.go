@@ -12,7 +12,7 @@ type GroupProfile struct {
 }
 
 // Persona 表示一条人格模板，「人格选择 agent」：通过 Agent 字段绑定到某个 agent（按名）。
-// Agent 字段 UNIQUE，一人一格；system_prompt 为完整人设文本，经 Instruction 注入。
+// Agent 字段 UNIQUE，一人一格；system_prompt 为完整人设文本，P6-001 起由 service 组装注入 system 消息。
 type Persona struct {
 	ID           int64  // 人格模板 ID
 	Agent        string // 绑定的 agent 名（人格选择 agent）

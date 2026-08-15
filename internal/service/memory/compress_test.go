@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
+
+	"plumebot/internal/domain/entity"
 )
 
 // fillWindow 向窗口追加 count 条消息，MessageID 从 startID 起递增（供 RemoveByIDs 精确匹配）。
@@ -28,6 +31,23 @@ func TestParseSummary(t *testing.T) {
 	fallback := parseSummary("模型没有按 JSON 输出，直接一段文字")
 	if fallback.Text != "模型没有按 JSON 输出，直接一段文字" || len(fallback.Keywords) != 0 {
 		t.Errorf("非 JSON 输出应回退为纯摘要文本: %+v", fallback)
+	}
+}
+
+// TestLevel1PromptUsesForLLM 压缩 prompt 用 ForLLM 视图（B-026）：有描述的图片注入描述而非 [图片]。
+func TestLevel1PromptUsesForLLM(t *testing.T) {
+	batch := []entity.Message{
+		{MessageID: "1", GroupID: "g1", UserID: "u1", Parts: []entity.ContentPart{
+			{Type: entity.PartTypeText, Text: "看看"},
+			{Type: entity.PartTypeImage, URL: "http://x/1.png", Description: "一只猫"},
+		}},
+	}
+	got := buildLevel1UserPrompt(batch)
+	if !strings.Contains(got, "（图片：一只猫）") {
+		t.Errorf("压缩 prompt 应注入图片描述（ForLLM）: %q", got)
+	}
+	if strings.Contains(got, "[图片]") {
+		t.Errorf("有描述的图片不应回退 [图片]: %q", got)
 	}
 }
 

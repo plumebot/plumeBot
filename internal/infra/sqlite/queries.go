@@ -9,6 +9,8 @@ const (
 	sqlGetMessages = `SELECT message_id, group_id, user_id, parts, timestamp, message_type
  FROM messages WHERE group_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?`
 
+	sqlUpdateMessageParts = `UPDATE messages SET parts = ? WHERE message_id = ?`
+
 	// ── conversation_summary ──
 
 	sqlSaveSummary = `INSERT INTO conversation_summary (chat_id, seq, text, keywords, decisions, created_at)

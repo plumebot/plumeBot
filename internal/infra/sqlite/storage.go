@@ -136,6 +136,13 @@ func marshalParts(parts []entity.ContentPart) string {
 	return string(b)
 }
 
+// UpdateMessageParts 覆盖一条消息的内容段（P6-001 B-025：图片描述写回 messages.parts）。
+// message_id 不存在时 UPDATE 影响 0 行，幂等不报错。
+func (s *Storage) UpdateMessageParts(ctx context.Context, messageID string, parts []entity.ContentPart) error {
+	_, err := s.db.ExecContext(ctx, sqlUpdateMessageParts, marshalParts(parts), messageID)
+	return err
+}
+
 // ──────────────────────────── conversation_summary ────────────────────────────
 
 // SaveSummary 归档一条摘要到 conversation_summary 表。

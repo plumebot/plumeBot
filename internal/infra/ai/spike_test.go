@@ -284,7 +284,8 @@ func TestSpikeLiveLLM(t *testing.T) {
 		t.Fatalf("组装 Agent 失败: %v", err)
 	}
 
-	// 系统提示词由工厂经 Instruction 注入（cfg.Agent.SystemPrompt），此处只传业务消息。
+	// P6-001 起人格由 service 组装注入 system 消息，工厂不再经 Instruction 注入 persona
+	//（cfg.Agent.SystemPrompt 置空 → Instruction 为空）。此处只传业务消息做真实 LLM 冒烟。
 	msgs := []entity.ChatMessage{
 		{Role: entity.RoleUser, Parts: []entity.ContentPart{{Type: entity.PartTypeText, Text: "你好，用一句话介绍你自己。"}}},
 	}

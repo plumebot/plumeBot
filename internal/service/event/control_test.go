@@ -47,10 +47,11 @@ func (f *fakeControl) OnReplied(_ context.Context, _ entity.Message) error {
 
 // newTailTestService 组装最小 EventService：agent nil（tail 不调）、memory + fake 存储、
 // plugin 无插件（命令分发返回 ErrNotFound，短路语义不变）、注入 fakeControl。
+// summarizer 传 nil：tail 测试窗口不会填满触发压缩，压缩器惰性创建不触达 nil 摘要器。
 func newTailTestService(c *fakeControl) *EventService {
 	return NewEventService(
 		agent.NewAgentService(nil),
-		memory.NewMemoryService(memory.NewWindow(), &tailStore{}, nil),
+		memory.NewMemoryService(memory.NewWindow(), &tailStore{}, nil, memory.BuilderConfig{}),
 		plugin.NewPluginService(nil),
 		c,
 		config.MiddlewareConfig{},

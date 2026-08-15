@@ -72,8 +72,9 @@ func registeredProviders(m map[string]Factory) string {
 // 兜底语义（消费方）：base_url 空 → DefaultOpenAIBaseURL；model 空 → 构造期报错（不可猜测）；
 // timeout_seconds ≤0 → DefaultLLMTimeoutSeconds；api_key 空透传；Temperature 转 *float32；
 // MaxTokens >0 → MaxCompletionTokens（*int，不用已废弃的 MaxTokens 字段）；
-// agent 三要素兜底：name 空 → DefaultAgentName，description 空 → DefaultAgentDescription，
-// system_prompt 空 → DefaultSystemPrompt（均经 Instruction/元数据注入 EinoAgent）。
+// agent 三要素兜底：name 空 → DefaultAgentName，description 空 → DefaultAgentDescription；
+// system_prompt 空 → 留空（P6-001 起人格由 service/memory BuildMessages 组装注入 system 消息，
+// 不再经 Instruction 注入；此处不再兜底 DefaultSystemPrompt）。
 func NewOpenAIFactory(tr *ToolsRegistry) Factory {
 	return func(ctx context.Context, cfg config.Config) (domain.Agent, error) {
 		entry, err := chatEntry(cfg)
@@ -89,16 +90,14 @@ func NewOpenAIFactory(tr *ToolsRegistry) Factory {
 		if err != nil {
 			return nil, err
 		}
-		// agent 三要素兜底（消费方兜底原则）：空值 → 默认常量，避免默认值漂移。
+		// agent 三要素兜底（消费方兜底原则）：name/description 空 → 默认常量，避免默认值漂移。
+		// system_prompt 不做兜底（P6-001：Instruction 置空，人格由组装注入，见函数注释）。
 		acfg := cfg.Agent
 		if acfg.Name == "" {
 			acfg.Name = config.DefaultAgentName
 		}
 		if acfg.Description == "" {
 			acfg.Description = config.DefaultAgentDescription
-		}
-		if acfg.SystemPrompt == "" {
-			acfg.SystemPrompt = config.DefaultSystemPrompt
 		}
 		return NewEinoAgent(ctx, cm, tools, acfg)
 	}

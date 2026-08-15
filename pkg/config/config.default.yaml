@@ -52,6 +52,11 @@ llm:
     #   model: qwen-vl-plus
   chat_model: chat              # 对话模型条目引用；空 → models[0]
   vision_model: ""              # 图片描述模型条目引用；空 = 描述关闭
+  prompt:                       # prompt 组装预算/上限（P6-001，架构 §6）
+    facts_per_member: 3         # 窗口内每成员事实条数上限；≤0 → 3
+    jargon_cap: 20              # confirmed 黑话条数上限；≤0 → 20
+    describe_recent_rounds: 5   # 只描述窗口最近 N 轮消息的图片；≤0 → 5
+    describe_per_turn_cap: 10   # 每条消息图片描述条数上限；≤0 → 10
 
 tools:
   enabled: [store_fact, learn_jargon, forget_fact]   # 启用的工具名列表（P3-004 记忆更新工具）；空 = 不注册任何工具

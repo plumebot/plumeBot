@@ -147,14 +147,15 @@ func TestOpenAIFactoryConstruct(t *testing.T) {
 	}
 }
 
-// agent.system_prompt 为空 → 兜底 DefaultSystemPrompt 注入 Instruction（构造成功即证明走了兜底路径）。
-func TestOpenAIFactoryPromptFallback(t *testing.T) {
+// agent.system_prompt 为空 → Instruction 留空（P6-001 起人格由 service 组装注入 system 消息，
+// 不再兜底 DefaultSystemPrompt；构造成功即证明空 Instruction 被接受）。
+func TestOpenAIFactoryEmptyInstructionOK(t *testing.T) {
 	f := NewOpenAIFactory(NewToolsRegistry())
 	cfg := fullLLMCfg()
 	cfg.Agent = config.AgentConfig{}
 
 	if _, err := f(context.Background(), cfg); err != nil {
-		t.Fatalf("agent.system_prompt 空应兜底默认人设，实际报错: %v", err)
+		t.Fatalf("agent.system_prompt 空应构造成功（Instruction 留空），实际报错: %v", err)
 	}
 }
 

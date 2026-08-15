@@ -7,9 +7,9 @@ import (
 	"plumebot/internal/domain/entity"
 )
 
-// AgentService 负责消息组装与 Agent 推理编排。
-// 系统提示词已下沉至 infra 层（ChatModelAgentConfig.Instruction，由 provider 工厂
-// 注入 cfg.Agent.SystemPrompt，空值兜底 config.DefaultSystemPrompt），本层只透传业务消息。
+// AgentService 负责 Agent 推理编排。
+// 五段消息组装（①persona + ②会话画像 + ③摘要 → system，④窗口，⑤当前消息）在
+// service/memory BuildMessages 完成（P6-001）；本层只透传组装好的完整消息列表给 domain.Agent。
 type AgentService struct {
 	agent domain.Agent
 }

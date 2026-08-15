@@ -177,6 +177,45 @@ func TestMessagesRoundTrip(t *testing.T) {
 	}
 }
 
+// TestUpdateMessageParts 校验图片描述写回（P6-001 B-025）：覆盖 parts、不存在幂等。
+func TestUpdateMessageParts(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("打开测试数据库失败: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	parts := []entity.ContentPart{
+		{Type: entity.PartTypeText, Text: "看看"},
+		{Type: entity.PartTypeImage, URL: "https://example.com/cat.png"},
+	}
+	if err := s.SaveMessage(ctx, entity.Message{MessageID: "m1", GroupID: "g1", UserID: "u1", Parts: parts, MessageType: "group"}); err != nil {
+		t.Fatalf("SaveMessage 失败: %v", err)
+	}
+
+	// 描述回填后写回。
+	filled := []entity.ContentPart{
+		{Type: entity.PartTypeText, Text: "看看"},
+		{Type: entity.PartTypeImage, URL: "https://example.com/cat.png", Description: "一只猫"},
+	}
+	if err := s.UpdateMessageParts(ctx, "m1", filled); err != nil {
+		t.Fatalf("UpdateMessageParts 失败: %v", err)
+	}
+	got, err := s.GetMessages(ctx, "g1", 10, 0)
+	if err != nil {
+		t.Fatalf("GetMessages 失败: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Parts) != 2 || got[0].Parts[1].Description != "一只猫" {
+		t.Errorf("描述应写回并读回: %+v", got)
+	}
+
+	// 不存在的 message_id → 幂等不报错。
+	if err := s.UpdateMessageParts(ctx, "no-such-id", filled); err != nil {
+		t.Errorf("不存在 message_id 应幂等不报错, 实际: %v", err)
+	}
+}
+
 // TestGroupConfigRoundTrip 校验 group_config 表 Upsert→Get 往返、覆盖与未命中（P5-001/P5-002 扩 12 列）。
 func TestGroupConfigRoundTrip(t *testing.T) {
 	s, err := Open(t.TempDir())

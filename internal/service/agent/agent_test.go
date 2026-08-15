@@ -23,8 +23,8 @@ func userMsg(text string) entity.ChatMessage {
 	return entity.ChatMessage{Role: entity.RoleUser, Parts: []entity.ContentPart{{Type: entity.PartTypeText, Text: text}}}
 }
 
-// GenerateReply 为纯透传：消息列表原样交给 Agent（系统提示词已下沉 infra 层
-// ChatModelAgentConfig.Instruction，service 不再组装 system 消息），回复透传。
+// GenerateReply 为纯透传：组装好的消息列表（含 system，P6-001 由 service/memory BuildMessages
+// 组装）原样交给 Agent，回复透传。
 func TestGenerateReplyPassthrough(t *testing.T) {
 	fake := &fakeAgent{reply: "测试回复"}
 	svc := NewAgentService(fake)

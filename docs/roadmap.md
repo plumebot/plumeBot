@@ -13,7 +13,7 @@
 | 第三阶段 | 记忆系统 | 上下文窗口 + 画像 + 压缩摘要 | ✅ |
 | 第四阶段 | 人格与插件 | 人格模板化 + 子进程插件加载 | ✅ |
 | 第五阶段 | 触发控制 | mention/auto 模式 + 状态规则 | ✅ |
-| 第六阶段 | 联调验收 | 完整消息链路跑通，bot 可对话 |
+| 第六阶段 | 联调验收 | 完整消息链路跑通，bot 可对话 | 🔄（P6-001 ✅，P6-002 待实现） |
 
 ---
 
@@ -81,7 +81,7 @@
 
 | 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 | 状态 |
 |---|---------|------|:---:|------|------|------|:--:|
-| P4-001 | 人格系统 | 按 cfg.Agent.Name 从 persona 表加载人格模板（GetPersonaByAgent），其 system_prompt 经 Instruction 注入 Agent；默认 agent 无模板则 seed 默认模板；兜底链：模板 → config.agent.system_prompt → DefaultSystemPrompt | P0 | infra/ai + infra/sqlite | P3-005、P2-004 | 启动按 agent 名加载模板生效；无模板兜底默认人设 | ✅ |
+| P4-001 | 人格系统 | 按 cfg.Agent.Name 从 persona 表加载人格模板（GetPersonaByAgent），其 system_prompt 经 Instruction 注入 Agent；默认 agent 无模板则 seed 默认模板；兜底链：模板 → config.agent.system_prompt → DefaultSystemPrompt（注：Instruction 注入已由 P6-001 修订为组装注入，见 CLAUDE.md §5.6） | P0 | infra/ai + infra/sqlite | P3-005、P2-004 | 启动按 agent 名加载模板生效；无模板兜底默认人设 | ✅ |
 | P4-002 | 子进程插件加载（吸收原 P4-003） | 定义插件**指令集协议**（entity.PluginRequest/PluginResult + infra/plugin_exe go-plugin RPC 接线，见架构 §8.6）+ 插件发现/命令路由（service/plugin，plugin.json）+ event service 命令分支（/开头 → 分发 → 校验 Result 记录，不发送） | P0 | domain/entity + infra/plugin_exe + service/plugin + service/event + cmd/bot | P1 全部 | 协议类型 + Validate 单测全绿；示例插件经 plugin.json 发现并拉起，命令匹配返回结构化 Result，宿主校验通过并记录（不执行回复/动作） | ✅ |
 | P4-003 | ~~exe 插件加载（补充）~~ | 已并入 P4-002（原「启动 exe → stdin JSON → 读 stdout 响应」机制提升为主方案，见上方设计变更） | - | infra/plugin_exe | - | - | - |
 
@@ -104,7 +104,7 @@
 
 | 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 | 状态 |
 |---|---------|------|:---:|------|------|------|:--:|
-| P6-001 | Prompt 组装联调 | 确认人格（persona 模板）→ 会话画像（群画像 + 窗口内成员事实 member_facts 各 N 条）→ 压缩摘要 → 窗口 → 当前消息的 prompt 顺序正确 | P0 | service/agent + service/memory | P3-003、P4-001 | 生成 prompt 格式符合架构文档第 6 节 |  |
+| P6-001 | Prompt 组装联调 | 确认人格（persona 模板）→ 会话画像（群画像 + 窗口内成员事实 member_facts 各 N 条）→ 压缩摘要 → 窗口 → 当前消息的 prompt 顺序正确。落地能力：注入上限（`llm.prompt` config：每成员事实条数/黑话条数/描述预算）、图片描述写回（`Storage.UpdateMessageParts`）、`Message.ForLLM()` 文本视图（压缩共用）、describer 缓存 + 失败冷却、at→text 组装转文本；persona 并入组装（BuildMessages 现查 persona 表，改库即时生效，取代 Instruction 注入）；事件管线接线归 P6-002 | P0 | service/memory + infra/ai + infra/sqlite + pkg/config + entity | P3-003、P4-001 | 生成 prompt 格式符合架构文档第 6 节 | ✅ |
 | P6-002 | 完整消息链路 | 端到端：收到群消息 → 中间件 → 触发判断 → 拼 prompt → Agent 推理 → 回复（agent service 收 `Generate` 返回值经 ctx 内 `domain.Sender` 直接发送，机制见 B-003）→ 记忆更新 → 窗口追加 | P0 | 全部 | 前五阶段全部完成 | bot 在群聊中被 @ 能正常回复；记忆正常更新；摘要正常生成 |  |
 | P6-003 | 稳定性验证 | 连续运行数小时，检查内存泄漏、goroutine 泄漏、SQLite 文件增长、API 调用频率 | P1 | 全部 | P6-002 完成 | 内存不持续增长；goroutine 不泄漏；API 调用不超过限制 |  |
 
@@ -126,7 +126,7 @@
 
 > 各阶段交付中明确暂缓/遗留的事项，防止遗忘。完成一项即删除对应行。
 >
-> 「所属阶段」列标注每个遗留事项的落地阶段：`P5-001` / `P6-001` / `P6-002` 为有明确承接任务；
+> 「所属阶段」列标注每个遗留事项的落地阶段：`P5-001` / `P6-002` 为有明确承接任务；
 > `P6` = 第六阶段内有需要时；`阶段3` = 原生多模态阶段；
 > `后置` = 无固定阶段，触发条件（见「处理时机」列）满足后再排期；
 > `持续` = 新增配置字段时持续履行的义务。
@@ -134,14 +134,13 @@
 | 编号 | 所属阶段 | 事项 | 来源 | 处理时机 | 说明 |
 |------|:---:|------|------|----------|------|
 | B-003 | P6-002 | 回复发送机制（已定方案 B：Sender 注入 ctx） | P6-002 设计决策 | P6-002 实现时 | 选定「方案 B：Sender 注入 ctx」（替代原方案 A 回复上抛）：matcher 闭包构造 per-event 的 `domain.Sender`（实现内持有 `*zero.Ctx`）经 `domain.WithSender(ctx, s)` 注入，Handler 链签名保持 `(ctx,msg) error` 不变；需回复的环节（agent service 收 `Generate` 返回值、插件等）`domain.SenderFrom(ctx).Send(reply)` 直接发送，载荷为结构化 `entity.Reply{ReplyID, AtTarget, Parts}`（多模态 + 引用回复 + @，onebot 实现转 `message.ReplyWithMessage`/`message.At` 段后 `ctx.SendChain`）。限流/敏感词固定文案维持现状（闭包 `decideReply(err)` 处理哨兵错误，见 CLAUDE.md §5.6）。`domain.Sender` 不含动作能力（与回复正交，见 B-015），也不含非响应式主动发送——后者（异步插件、定时、P5 auto 后续发言）需显式目标，届时另定义 `SendTo` 形态并 main 注入 |
-| B-004 | P6-003 | 无界 map 内存治理（限流/窗口/画像/摘要） | P2-003 实现注释 + 设计评审 L1 | P6-003 | ratelimit `map[string]*rate.Limiter`、`Window.data`、`ProfileCache.groups`、`SummaryStore.chains/nextSeq` 四个按群/用户键的 map 只增不删，需按空闲时长统一淘汰（LRU 或 TTL） |
+| B-004 | P6-003 | 无界 map 内存治理（限流/窗口/画像/摘要） | P2-003 实现注释 + 设计评审 L1 | P6-003 | ratelimit `map[string]*rate.Limiter`、`Window.sessions`、`ProfileCache.groups`、`SummaryStore.chains/nextSeq` 四个按群/用户键的 map 只增不删，需按空闲时长统一淘汰（LRU 或 TTL） |
 | B-006 | 持续 | 配置模板双份同步 | config 重构 | 新增配置字段时 | pkg/config/config.default.yaml 与根 config.yaml 需手动同步（config.go 注释已标明）。阶段 2 llm 数组化后守卫测试 `TestRootConfigYAMLSyncedWithDefault` 已随 `models[]` 更新，api_key 按条目逐项排除比较 |
 | B-007 | 后置 | 连接级 context 传播 | P2-003 设计讨论 | ZeroBot 支持或自研连接时 | ZeroBot 无事件级 ctx，连接层传 context.Background()；service Handler 已预留 ctx 参数，未来仅需改 onebot 一处 |
 | B-008 | 后置 | eino 版本升级观察 | P2-004 评审决策 | eino-ext 跟进 v0.9 后 | 当前锁定 eino v0.8.13 + eino-ext openai v0.1.13。**不升 v0.9 的理由**（原 P2-004 计划文档 §3 决策，已归档进本行）：① eino-ext 生态滞后——eino-ext main 仍 require `eino v0.7.13`，与 v0.9 schema 大改（ToolInfo 移除 Bound/InvokableRun、agent 迁 adk）组合存在编译/行为不兼容风险；② v0.9 取最终文本需 Runner + AsyncIterator 事件循环，v0.8 为薄门面（消息进、文本出），本项目不需要事件流复杂度；③ v0.9 发布太新，文档与示例几乎全是旧 API，踩坑成本高；④ 本项目需要的多模态字段（UserInputMultiContent/MessageInputImage）、tool 自动循环在 v0.8.13 全部可用且非废弃；⑤ 迁移成本可控——domain.Agent 是门面，infra/ai 内部换实现不影响上层。API 速查见 docs/eino-notes.md；待 eino-ext 跟进 v0.9 且 adk API 稳定后评估迁移 |
-| B-009 | P6-001 | 多模态消息模型 / 描述机制 | P2-004 范围边界 | P6-001 装配接线 | **阶段 1/2 已完成（P5 多模态修复 + 描述机制）**。阶段 1：entity.Message 去 `Content` 改 `Parts []ContentPart`，convert 段→Parts 映射（image 存 URL 不存 base64、at→PartTypeAt、face/reply 丢弃），SQLite messages 改 parts 列，敏感词/命令走 PlainText()、日志/压缩走 Render()。阶段 2：llm 数组化（`models[]` + `chat_model`/`vision_model` 引用 name，env 限定 chat 条目）、`domain.MediaDescriber` + `EinoMediaDescriber`（拉图→base64→视觉模型）、base64:// 入链闭合（`data/image_cache/<md5>` 路径）。剩余：① NapCat 图片 URL 可达性已加门控 spike（`TestSpikeNapCatImageReachable`，需真实 NapCat 复验）；② 惰性装配接线（P6-001 拼 ChatMessage 时经 BuildContext 调用描述器 + 最近 N 轮预算 + 内存缓存，需配置 `vision_model`）；③ 阶段 3 原生多模态（`native_multimodal` 配置开关，默认关，字段已占位） |
+| B-009 | 后置 | 多模态消息模型 / 描述机制 | P2-004 范围边界 | 有需要时 | **阶段 1/2 已完成（P5 多模态修复 + 描述机制）**；**惰性装配接线已于 P6-001 完成**（BuildMessages 经 describer 惰性描述最近 N 轮 + 当前消息的图片，预算 llm.prompt，describer 内缓存 contentHash→desc）。剩余：① NapCat 图片 URL 可达性已加门控 spike（`TestSpikeNapCatImageReachable`，需真实 NapCat 复验）；② 阶段 3 原生多模态（`native_multimodal` 配置开关，默认关，字段已占位，见 B-035） |
 | B-012 | 后置 | 摘要关键词召回未规划 | P3-003 验收边界 | 检索式长程记忆需要时 | 归档摘要（conversation_summary）带 keywords 字段，但当前只用于回灌热链底，无「按关键词召回相关摘要」的消费路径；届时实现关键词索引/检索（架构 §4.1「关键词检索走本地 SQLite」） |
 | B-013 | 后置 | 氛围标签写入者归属 | P3-004 讨论 | 群氛围周期分析任务排期时 | `group_profile.atmosphere` 当前无写入者（P3-002 仅加载/缓存）；「氛围标签周期性 LLM 分析」（架构 §4.3）暂无任务承接。P3-004 确认黑话走 group_jargon 独立表 + 状态机，氛围标签仍留 profile（整组重写、非逐条生命周期，见架构 §4.3.1） |
-| B-014 | P6-001 | 事实/黑话注入上限归 P6-001 | P3-004 讨论 | P6-001 prompt 组装实现时 | 记忆「无界写入、有界注入」：member_facts/group_jargon 落库无上限，注入 prompt 的量设上限由组装消费方定（窗口内成员各 N 条事实、confirmed 黑话条数上限，注入到 §6 的 ② 会话画像块，见架构 §4.3.1/§6）；存储层本期不做淘汰 |
 | B-015 | 后置 | AI 群管理动作（设计已定） | 设计讨论（B-003 关联） | 有实际需求时 | AI 自主群管理（禁言/踢人/改名片等）经 agent tool 触发，不走回复通道：新建 `domain.GroupManager` 接口（Ban/Kick/...），与 `domain.Sender` 分离——动作权限不注入整条消息链（禁言等为高危能力），仅暴露给工具层；实现 per-event 经 ctx 注入（OneBot 动作绑定当次事件 `*zero.Ctx`，与 Session/Sender 同构，工具为共享单例）；护栏：per-group 配置开关（默认关）+ bot 需管理员权限 + 工具 Desc 写清触发边界 |
 | B-016 | 后置 | Agent 动态人格演化暂缓 | P4-001 设计决策 | 有需要时 | 人格为 DB 人格模板、人格选择 agent（persona.agent 绑定，见架构 §7），无 update_persona tool / 无运行时演化；如需 per-group 人设或 Agent 在对话中自主调整人格，届时再加工具与维度 |
 | B-017 | P6-002 | 插件回复/动作**执行** | P4-002 协议先行决策 | P6-002 / B-015 | 插件返回 `entity.PluginResult{Reply, Actions}` 仅协议定义 + 宿主校验记录（架构 §8.6），不执行。回复发送（文本/图片/引用/@，`Reply.Segments`/`Quote`/`At`）归 P6-002（B-003 Sender）；群管理动作（`Actions`，mute/unmute/kick/set_card）归 B-015（GroupManager + per-group 开关 + 管理员校验） |
@@ -150,16 +149,14 @@
 | B-020 | 后置 | `plugin_config` 表使用 + 插件自持状态 | P4-002 范围外 | 有需要时 | 按群插件配置（§11 `plugin_config` 表）与插件自持状态读写，当前 `plugin.json` 仅承载命令表元数据 |
 | B-021 | P6 | 引用回复（reply 段）解析 | 多模态修复阶段 1 裁剪 | P6 有需要时 | 入站 `reply` 段当前被丢弃（face/forward/json/xml/music 同为永久简化，但 reply 不同）。引用回复是强上下文信号：支持需解析引用 `message_id`，从窗口 / SQLite 找回原文并入上下文。P6 级能力，未排期 |
 | B-022 | 后置 | `data/image_cache/` 文件只增不清 | 阶段 2 base64 入链闭合 + 设计评审 E7 | 有需要时 | `internal/infra/imagecache` 按内容 md5 去重落盘（同图幂等），但无引用计数/淘汰，长期运行会累积缓存文件；届时按体积/时间做清理策略。另：`Save` 的 `Stat+WriteFile` 有 TOCTOU，改 `O_CREATE|O_EXCL` 原子去重（随本项处理） |
-| B-025 | P6-001 | 图片描述持久化 | 设计评审 M1 | P6-001 实现 | 描述写回 `messages.parts`（新增 `Storage.UpdateMessageParts`/`SaveMessageDescription`），成为可检索持久数据，URL 过期后描述不丢 |
-| B-026 | P6-001 | `Message.ForLLM()` 文本视图 | 设计评审 M5 | P6-001 实现 | text + at + 图片描述（无则 `[图片]`）统一 LLM 文本视图；压缩 `buildLevel1UserPrompt` 与 prompt 组装共用；`Render()` 留给日志 |
-| B-027 | P6-001 | 描述缓存下沉 describer + 预算 | 设计评审 M6 | P6-001 实现 | 缓存下沉 `EinoMediaDescriber` 实现（`contentHash→desc` 并发安全 map）；预算策略组装层定（只描述窗口内 image + 每轮上限） |
-| B-028 | P6-001 | `at` 段组装转文本 | 设计评审 M3-B | P6-001 实现 | service 组装时入站 `Message.Parts`（含 at）→ `ChatMessage.Parts`（at→text）；`ToSchema` at 兜底已完成（原 B-029） |
 | B-033 | P6 | `GetMessages` 私聊维度 | 设计评审 S3 | P6 | 接口加 user_id，私聊按用户区分（当前 `group_id=""` 会混） |
 | B-034 | 后置 | 版本化迁移 | 设计评审 S1 + P5-002 审查 | 生产前 | `schema_migrations` 版本化，替代全量重跑 001（解决加列不生效）。**P5-002 触发案例**：group_config 扩 10 列时原地改 001，对已存在的旧库（P5-001 时代 2 列）升级会静默失效（migrate 只 `CREATE TABLE IF NOT EXISTS` 不加列，12 列 SELECT 报错 → auto 模式对所有非 @ 群消息静默）。开发期 data/ 为空无影响；生产前必须版本化，并新增独立迁移文件用 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 补列 |
 | B-035 | 阶段3 | 阶段3 原生多模态（`native_multimodal`）+ 本地路径转 base64 | 设计评审 M4 + 多模态阶段 3 设计 | 阶段3 | `native_multimodal: true` 时 image part 直接进 ChatMessage 喂视觉模型（可选增强：读取后转描述省上下文；可能的对象存储升级后续）；`loadImageBytes` 下沉共享 helper，`ToSchema`/`partCommon` 对本地路径走 base64（默认关，不阻塞；配置字段已占位） |
 | B-036 | P6-003 | per-group 配置内存缓存 | P5-001 设计 + P5-002 评估 | P6-003 map 治理时 | 热路径每条非命令消息一次 `GetGroupConfig` 单 PK 查询。**P5-002 评估结论**：加 10 列后仍为单 PK 查询（本地 SQLite 纯 Go 驱动，微秒级，秒级流量可忽略）；缓存收益 < 引入的一致性窗口 + 无界 map 淘汰复杂度，维持不缓存。如优化，per-group 静态配置（groupID→mode+rules，变更低频）加短 TTL 内存缓存，与 B-004（ratelimit/Window/ProfileCache/SummaryStore 四个 map）统一在 P6-003 做 LRU/TTL 淘汰 |
 | B-038 | P6-002 | OnReplied 接线时序（防重复记账） | P5-002 审查 M2 | P6-002 接发送时 | P5-002 约定「judge 触发即 OnReplied 记账」（标记触发=视为说话，架构 §9.2）。P6-002 真实发送后，OnReplied 应在**发送成功环节**调用并移除 judge 处调用，否则同一消息记两次（能量/冷却/连续重复扣） |
 | B-039 | P6 | P5-002 已知边界 | P5-002 审查 L2/L3/L4 | P6 有需要时 | ①纯图片/媒体消息 auto 模式永不触发（`PlainText()` 空 → short_message 短路，多模态启用后需豁免非 text 段）；②静默时段按服务器本地时区（群成员时区不同时窗口偏移）；③per-group 只配 `quiet_hours_start` 且等于全局 end 时静默被禁用（start==end 空段语义，建议配置侧 warn） |
+| B-040 | P6-002 | 组装/压缩同会话并发约束落实 | P6-001 审查 BUG-1 | P6-002 接线时 | `BuildMessages` 的惰性描述回填依赖 `GetWindow` 浅拷贝（Parts 共享底层数组**逃逸出窗口锁**），**同会话 BuildMessages 与窗口压缩（Compressor）必须串行**，否则并发读写共享数组产生数据竞态（ZeroBot 每条消息一个 goroutine）。跨会话已由「窗口/状态 per-session 锁」保证互不阻塞（P6-001 审查后落实，见 CLAUDE.md §5.6 与架构 §4.1）；**剩余的是同会话数组竞态**：P6-002 接线时二选一：① 事件管线对同会话消息处理加锁（注意窗口 per-session 锁不覆盖逃逸数组，需组装/压缩共享同一把会话锁）；② `GetWindow` 改深拷贝（放弃窗口内存回填，靠 describer 缓存 + `UpdateMessageParts` 持久化，代价是每次组装重查重写） |
+| B-041 | P6 | 空 MessageID 根修（OneBot message_id=0） | P6-001 审查 BUG-2/6 | P6 有需要时 | 入站 `message_id=0` 时 `formatID` 返回 `""`，导致：SQLite `message_id=''` 行被多消息共享（描述写回错位）、窗口内多副本。P6-001 已在组装层防御（空 ID 不持久化描述 + 按位置去重）；根修在 onebot convert 对空 ID 合成唯一 ID（如时间+内容哈希），消除 `''` 行共享与窗口多副本 |
 
 ---
 

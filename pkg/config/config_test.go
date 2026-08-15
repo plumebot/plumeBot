@@ -308,7 +308,7 @@ func TestLoadMissingFileCreatesParentDir(t *testing.T) {
 // 嵌入的默认配置应包含全部配置节（与 Config 结构对应）。
 func TestDefaultYAMLHasAllSections(t *testing.T) {
 	content := string(defaultConfigYAML)
-	for _, section := range []string{"bot:", "onebot:", "log:", "control:", "middleware:", "rate_limit:", "llm:", "models:", "chat_model:", "vision_model:", "native_multimodal:", "tools:", "agent:"} {
+	for _, section := range []string{"bot:", "onebot:", "log:", "control:", "middleware:", "rate_limit:", "llm:", "models:", "chat_model:", "vision_model:", "prompt:", "native_multimodal:", "tools:", "agent:"} {
 		if !strings.Contains(content, section) {
 			t.Errorf("默认配置缺少 %q 节", section)
 		}

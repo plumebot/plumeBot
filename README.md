@@ -26,6 +26,10 @@
 首次运行前编辑 `config.yaml`：缺失时由 `pkg/config` 自动写入嵌入默认模板
 （`config.default.yaml`），再填写 NapCat WebSocket 地址、模型 API Key 等。
 
+> 人格注意：bot 人格由 SQLite `persona` 表定义（首次启动 seed 默认模板），改人格请改
+> `persona` 表（即时生效，无需重启）；`config.yaml` 的 `agent.system_prompt` 仅作 persona
+> 未配置时的兜底，不覆盖 persona 表。
+
 ### 编译 & 启动
 
 ```bash
@@ -60,4 +64,4 @@ plumebot/
 
 ## 当前阶段
 
-第五阶段：触发控制（P5-001/002 已完结）。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。
+第六阶段：联调验收（P6-001 Prompt 组装已完结，P6-002 完整消息链路待实现）。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。

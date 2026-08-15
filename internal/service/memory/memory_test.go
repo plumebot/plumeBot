@@ -95,7 +95,7 @@ func (f *fakeSummarizer) Summarize(_ context.Context, _ string, _ string) (strin
 
 func TestPersistMessageWritesWindowAndStorage(t *testing.T) {
 	store := &fakeStorage{}
-	svc := NewMemoryService(NewWindow(), store, &fakeSummarizer{})
+	svc := NewMemoryService(NewWindow(), store, &fakeSummarizer{}, BuilderConfig{})
 	msg := groupMsg("g1", "hi")
 
 	full, err := svc.PersistMessage(context.Background(), msg)
@@ -120,7 +120,7 @@ func TestPersistMessageWritesWindowAndStorage(t *testing.T) {
 
 func TestPersistMessageSignalsCompressionAtCap(t *testing.T) {
 	store := &fakeStorage{}
-	svc := NewMemoryService(NewWindow(), store, &fakeSummarizer{})
+	svc := NewMemoryService(NewWindow(), store, &fakeSummarizer{}, BuilderConfig{})
 	for i := 0; i < WindowCap; i++ {
 		full, err := svc.PersistMessage(context.Background(), groupMsg("g1", "m"))
 		if err != nil {

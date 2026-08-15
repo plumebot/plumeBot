@@ -73,6 +73,10 @@ ZeroBot (连接层，只管收发)
   - 重启后从上次的 seq+1 开始拉，精准补全断档
   - 拉取到的消息写入 SQLite messages 表，确保后续可检索
   - 该 API 不支持关键词搜索，关键词检索走本地 SQLite
+- 锁粒度：**每会话一把锁（per-session）**，不同群/私聊的窗口操作互不阻塞，单会话内串行保序
+  （`Window` 用 `sync.Map` 注册表 + 每会话 `sync.Mutex`，与 §9.2 service/control 的 per-session 锁同模式）。
+  注意：此锁只保护窗口内部数据结构，不覆盖 `GetWindow` 浅拷贝逃逸出的 Parts 数组——
+  同会话 BuildMessages 与窗口压缩的数组读写约束见 roadmap B-040。
 - 作用：直接拼入 prompt 让 Agent 知道"刚刚在聊什么"
 
 ### 4.2 成员记忆（私聊 / 群聊，中期）
@@ -81,7 +85,7 @@ ZeroBot (连接层，只管收发)
 - 粒度：对某个用户的零散事实；`group_id` 区分场景——**空 = 私聊记忆，非空 = 群聊记忆**（同人在不同群可记不同事实）
 - 内容：事实性记忆、兴趣话题等原子条目（一条一记，各有独立生命周期：去重 / 删除）
 - 写入：Agent 经工具（store_fact / forget_fact，P3-004）实时更新，不并入画像整行重写
-- 读取：P6 prompt 组装时按当前会话成员现查注入到 §6 的 ② 会话画像块（「无界写入、有界注入」，每成员各 N 条，上限由组装消费方定，见 B-014）
+- 读取：P6 prompt 组装时按当前会话成员现查注入到 §6 的 ② 会话画像块（「无界写入、有界注入」，每成员各 N 条，上限由组装消费方定——`llm.prompt`，P6-001 落地）
 - 召回：`(group_id, user_id)` 精确查询
 
 > 说明：原「群聊个人画像（member_profile，活跃度/亲密度统计）」无写入者、无消费者，
@@ -153,7 +157,7 @@ Agent 通过 eino Tool 机制驱动记忆更新，在对话中自行判断何时
 │ ① 系统人格            │  persona 模板的 system_prompt（按 agent 名加载），定义"你是谁"
 ├──────────────────────┤
 │ ② 会话画像            │  群画像（群文化/黑话/氛围 + confirmed 黑话）
-│                      │  + 窗口内成员事实（member_facts 各 N 条，见 §4.2 / B-014）
+│                      │  + 窗口内成员事实（member_facts 各 N 条，见 §4.2）
 ├──────────────────────┤
 │ ③ 压缩摘要            │  历史上下文（全量拼接）
 ├──────────────────────┤
@@ -164,7 +168,7 @@ Agent 通过 eino Tool 机制驱动记忆更新，在对话中自行判断何时
 ```
 
 > ② 会话画像 = 群画像（group_profile）+ 窗口内成员事实（member_facts，每成员各 N 条）。
-> 成员事实与 confirmed 黑话均「读在组装」现查注入（§4.3.1，上限见 B-014）；
+> 成员事实与 confirmed 黑话均「读在组装」现查注入（§4.3.1，上限见 `llm.prompt`，P6-001 落地）；
 > 私聊无群画像，② 仅含当前用户成员事实（group_id 空）。
 
 ---
@@ -184,7 +188,7 @@ persona (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   agent         TEXT NOT NULL DEFAULT '',  -- 绑定的 agent 名（人格选择 agent），UNIQUE
   name          TEXT NOT NULL DEFAULT '',  -- 展示名（给人看），不参与逻辑
-  system_prompt TEXT NOT NULL DEFAULT ''   -- 完整人设文本（经 Instruction 注入）
+  system_prompt TEXT NOT NULL DEFAULT ''   -- 完整人设文本（P6-001 起经 service 组装注入 system 消息）
 );
 ```
 
@@ -193,13 +197,16 @@ persona (
 
 ### 7.3 生效路径
 
-启动时按 `cfg.Agent.Name` 查 persona 模板 → 其 `system_prompt` 经 `ChatModelAgentConfig.Instruction`
-注入 Agent（P2-004 方案 A'）。兜底链：模板 `system_prompt` → `config.agent.system_prompt` → `DefaultSystemPrompt`。
+P6-001 起：`service/memory BuildMessages` 每次组装按 `cfg.Agent.Name` 现查 persona 模板（`GetPersonaByAgent`），
+其 `system_prompt` 作为 ① 段拼入首条 system 消息（与 ② 会话画像、③ 历史摘要 同消息）。
+**改 persona 表即时生效，无需重启**。兜底链：模板 `system_prompt` → `config.agent.system_prompt`
+（`defaultPersona`，main 传入组装器）→ `DefaultSystemPrompt`。`ChatModelAgentConfig.Instruction`
+自 P6-001 起不再承载人格（`cfg.Agent.SystemPrompt` 置空，provider 工厂不再兜底）。
 
 ### 7.4 更新与初始化
 
-直接改 persona 表（人工/管理端）重启生效。「Agent 在对话中感知环境后自行调整人格」
-（原 update_persona tool 思路）暂缓，列为未来方向，见 roadmap B-016。
+直接改 persona 表（人工/管理端）即时生效（P6-001 起 BuildMessages 每次组装现查，无需重启，见 §7.3）。
+「Agent 在对话中感知环境后自行调整人格」（原 update_persona tool 思路）暂缓，列为未来方向，见 roadmap B-016。
 启动时默认 agent 无模板则 seed 一条默认模板（P4-001）。
 
 ---
@@ -463,7 +470,7 @@ main()
   ├── 1. load config.yaml
   ├── 2. infra/sqlite.Init()         → 建表 + 默认人格模板 seed
   ├── 3. service/plugin.Discover()   → 扫描 plugins/ 拉起子进程插件
-  ├── 4. service/agent.Init()        → 构建 eino Agent + 注册 Tool（按 cfg.Agent.Name 加载 persona 模板，system_prompt 经 Instruction 注入）
+  ├── 4. service/agent.Init()        → 构建 eino Agent + 注册 Tool（persona 由 P6-001 组装时现查注入 system 消息，启动仅 seed 默认模板）
   ├── 5. handler/message.Init()      → 组装中间件链 + 分流
   ├── 6. handler/notice.Init()       → 通知规则
   └── 7. infra/onebot.Run()          → ZeroBot 连接 NapCat，接收事件

@@ -26,17 +26,18 @@ var errNoModelOutput = errors.New("模型未返回任何消息")
 var _ domain.Agent = (*EinoAgent)(nil)
 
 // EinoAgent 是基于 eino ChatModelAgent 的 domain.Agent 实现。
-// 系统提示词经 Instruction 注入（固定人设，组装在 infra 层，由工厂传 cfg.Agent）；
-// 对话上下文（历史、画像等）由消息列表携带，工具按需注入。
+// P6-001 起人格不再经 Instruction 注入（通常为空）：①系统人格由 service/memory BuildMessages
+// 组装注入首条 system 消息（改 persona 表即时生效），本层只执行推理；工具按需注入。
 type EinoAgent struct {
 	agent *adk.ChatModelAgent
 }
 
 // NewEinoAgent 组装 eino ChatModelAgent。
-// acfg 为 agent 元数据与人设：Name/Description 是 adk 元数据标识
+// acfg 为 agent 元数据：Name/Description 是 adk 元数据标识
 // （adk 要求 Name/Description 非空才能被 NewAgentTool 包装为子 agent 工具，
 // 当前单 agent 场景不依赖，但规范填写为将来 multi-agent 铺路；由工厂兜底默认值）；
-// SystemPrompt 为机器人系统提示词（固定人设，经 Instruction 注入，由工厂兜底 DefaultSystemPrompt）；
+// SystemPrompt 保留字段但 P6-001 起通常为空（人格由 service 组装注入，见 EinoAgent 注释；
+// 非空时仍会经 Instruction 前置，用于兜底/测试）；
 // tools 为空时不注入 ToolsConfig（空 ToolsNodeConfig 行为未验证，不冒险）；
 // MaxIterations 显式兜底 defaultMaxIterations。
 func NewEinoAgent(ctx context.Context, cm model.BaseChatModel, tools []tool.BaseTool, acfg config.AgentConfig) (*EinoAgent, error) {
