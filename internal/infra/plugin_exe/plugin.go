@@ -32,7 +32,9 @@ var Handshake = plugin.HandshakeConfig{
 }
 
 // defaultCallTimeout 是单次插件调用默认超时（net/rpc 无内置超时，宿主侧兜底）。
-const defaultCallTimeout = 5 * time.Second
+// 5s → 30s（csstats 插件真实 HTTP 查询 + LLM 点评需要；超时宿主不返回任何回复）。
+// B-019 per-plugin 超时策略仍后置。
+const defaultCallTimeout = 30 * time.Second
 
 // API 实现 go-plugin 的 plugin.Plugin 接口（net/rpc 变体）。
 // 插件侧 Impl 为真实实现；宿主侧 Impl 为空，仅用于 Dispense 出客户端代理。
