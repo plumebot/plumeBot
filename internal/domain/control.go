@@ -16,8 +16,7 @@ type Control interface {
 	// auto 模式状态规则（short_message → quiet_hours → energy → cooldown/连续休息 → auto_pass）。
 	ShouldReply(ctx context.Context, msg entity.Message) (entity.Decision, error)
 
-	// OnReplied 在 bot 决定回复后回调，维护 bot_state 状态规则（P5-002：消耗精力、记冷却、
-	// 连续计数）。P5-002 起由 event 管线在 judge 时接线（标记触发即视为 bot 说话）；
-	// P6-002 回复真实发出后若需按实际发送结果调整，再在发送环节接线。
+	// OnReplied 在 bot 回复发出后回调，维护 bot_state 状态规则（P5-002：消耗精力、记冷却、
+	// 连续计数）。P6-002 起由 event respond 在发送成功环节调用（B-038：防同一消息重复记账）。
 	OnReplied(ctx context.Context, msg entity.Message) error
 }

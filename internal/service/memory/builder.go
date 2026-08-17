@@ -13,20 +13,21 @@ import (
 )
 
 // replyInstruction 是 system 块末尾的回复指令（P6-001，架构 §6 ⑤ 的回应提示）。
-const replyInstruction = "请根据以上对话内容，自然回复最后一条消息，贴合会话风格，简洁口语化。"
+// 指令位于 system 首条（在 ④窗口/⑤当前消息 之上），故称「以下对话内容」。
+const replyInstruction = "请根据以下对话内容和自身人设，自然回复最后一条消息。"
 
 // BuildMessages 组装 P6-001 五段完整消息链（架构 §6）：
 //
 //	[system: ①persona + ②会话画像 + ③历史摘要] → ④窗口（时间序）→ ⑤当前消息。
 //
 // botID 用于窗口内 bot 自己的消息 → RoleAssistant（RoleUser 之外）；空 = 全部 RoleUser。
-// 组装走纯文本：窗口/当前消息渲染为单文本 part = ForLLM(msg)（B-026/B-028，原生多模态阶段3 不做）。
+// 组装走纯文本：窗口/当前消息渲染为单文本 part = speakerText(msg)（B-026/B-028，原生多模态阶段3 不做）；
+// 群聊消息带发送者前缀（区分不同说话人，见 speakerText），私聊对方唯一不加。
 // persona 每次现查（改 persona 表即时生效，B 决策 1）；图片惰性描述（B-009②/B-027）+ 持久化（B-025）。
 //
-// 并发约束（审查 BUG-1，P6-002 接线前须落实）：describeCandidates 原地回填依赖 GetWindow 浅拷贝
-// （Parts 底层数组与窗口内部共享），**同一会话的 BuildMessages 与窗口压缩（Compressor）必须串行**，
-// 否则对共享数组的并发读写产生数据竞态。当前 BuildMessages 仅测试/单 goroutine 调用安全；
-// P6-002 接线时以「per-session 串行」或「GetWindow 深拷贝」之一落实（见 roadmap B-040）。
+// 并发约束（B-040 已落实：GetWindow 深拷贝 + BackfillParts 安全回填）：describeCandidates 惰性
+// 描述写回的是 GetWindow 深拷贝（Parts 与窗口内部隔离），描述经 BackfillParts 在窗口锁内回填
+// 内部消息——组装与压缩各持独立快照，无逃逸数组竞态、无跨 LLM 持锁，同会话互不阻塞。
 func (s *MemoryService) BuildMessages(ctx context.Context, msg entity.Message, botID string) ([]entity.ChatMessage, error) {
 	sessionID := msg.SessionKey()
 	win, err := s.memory.GetWindow(ctx, sessionID)
@@ -57,7 +58,7 @@ func (s *MemoryService) BuildMessages(ctx context.Context, msg entity.Message, b
 	// ⑤ 当前消息恒为 RoleUser（即使不在窗口也追加）。
 	out = append(out, entity.ChatMessage{
 		Role:  entity.RoleUser,
-		Parts: []entity.ContentPart{{Type: entity.PartTypeText, Text: cur.ForLLM()}},
+		Parts: []entity.ContentPart{{Type: entity.PartTypeText, Text: speakerText(cur)}},
 	})
 	return out, nil
 }
@@ -68,8 +69,7 @@ func (s *MemoryService) BuildMessages(ctx context.Context, msg entity.Message, b
 
 // describeCandidates 描述预算：只处理窗口最近 describe_recent_rounds 轮 + 当前消息（B-027）。
 // describer nil（无 vision_model）直接返回；每消息上限 describe_per_turn_cap 张。
-// 窗口副本与窗口内部共享 Parts 底层数组（GetWindow 浅拷贝），原地回填隐式写回窗口内存；
-// 并发约束见 BuildMessages 注释（BUG-1，同会话须与压缩串行）。
+// 写回的是 GetWindow 深拷贝，描述经 BackfillParts 锁内回填窗口内部（B-040），并发安全。
 func (s *MemoryService) describeCandidates(ctx context.Context, win []entity.Message, cur *entity.Message) {
 	if s.describer == nil {
 		return
@@ -85,6 +85,9 @@ func (s *MemoryService) describeCandidates(ctx context.Context, win []entity.Mes
 	for i := start; i < len(win); i++ {
 		s.describeMessage(ctx, &win[i], capPerMsg)
 		if sameMessage(win[i], *cur) {
+			// 当前消息已被窗口副本描述（covered）：同步描述后版本到 cur，⑤ 用描述后的渲染
+			//（P6-001 边角修正：否则当前消息图片在 prompt 中显示 [图片]）。
+			cur.Parts = win[i].Parts
 			covered = true
 		}
 	}
@@ -95,9 +98,10 @@ func (s *MemoryService) describeCandidates(ctx context.Context, win []entity.Mes
 }
 
 // describeMessage 描述一条消息中 Description 为空的 image part，每条消息最多 limit 张。
-// 失败仅记日志不阻断组装 → ForLLM 回退 [图片]；成功回填 part.Description 并持久化（B-025）。
-// 空 MessageID（审查 BUG-2）不持久化（避免 UPDATE 命中全库唯一 message_id=” 行造成错位），
-// 仅内存回填本次组装使用。
+// 失败仅记日志不阻断组装 → ForLLM 回退 [图片]；成功回填 part.Description 并持久化（B-025）
+// + 窗口锁内回填（B-040 BackfillParts，使下次组装跳过、压缩摘要含图片描述）。
+// 空 MessageID（审查 BUG-2）不持久化/不回填（避免 UPDATE 命中全库唯一 message_id=” 行造成错位），
+// 仅本次组装在副本上使用。
 func (s *MemoryService) describeMessage(ctx context.Context, m *entity.Message, limit int) {
 	described := 0
 	for j := range m.Parts {
@@ -116,12 +120,28 @@ func (s *MemoryService) describeMessage(ctx context.Context, m *entity.Message, 
 		m.Parts[j].Description = desc
 		described++
 		if m.MessageID == "" {
-			continue // 空 ID 无可靠落库目标，不持久化
+			continue // 空 ID 无可靠落库目标，不持久化/不回填
 		}
 		if err := s.store.UpdateMessageParts(ctx, m.MessageID, m.Parts); err != nil {
 			// 不回滚：本次组装仍可用，下次组装重试持久化。
 			logger.Warn("持久化图片描述失败", logger.S("message_id", m.MessageID), logger.Err(err))
 		}
+		s.backfillParts(ctx, m.SessionKey(), m.MessageID, m.Parts)
+	}
+}
+
+// backfillWindow 是 Window 的可选能力：窗口内消息 Parts 回填（B-040 深拷贝+安全回填）。
+// 不并入 domain.Memory 接口：图片描述回填是「最佳努力」优化，跳过无碍（描述已持久化，下次组装
+// 重试），可选接口 + 静默跳过正合适；正确性关键操作则应进接口（如 AppendToSession，见 domain.Memory）。
+// 无此能力（测试桩）时跳过。
+type backfillWindow interface {
+	BackfillParts(ctx context.Context, sessionID, messageID string, parts []entity.ContentPart)
+}
+
+// backfillParts 把已描述的部分回填到窗口内部消息（窗口锁内，见 Window.BackfillParts）。
+func (s *MemoryService) backfillParts(ctx context.Context, sessionID, messageID string, parts []entity.ContentPart) {
+	if bw, ok := s.memory.(backfillWindow); ok {
+		bw.BackfillParts(ctx, sessionID, messageID, parts)
 	}
 }
 
@@ -272,13 +292,24 @@ func (s *MemoryService) buildSummaryText(ctx context.Context, chatID string) str
 // 辅助
 // ---------------------------------------------------------------------------
 
-// toChatMessage 窗口消息 → ChatMessage：单文本 part（ForLLM，B-026/B-028），bot 自己的消息 → assistant。
+// toChatMessage 窗口消息 → ChatMessage：单文本 part（speakerText，B-026/B-028），bot 自己的消息 → assistant。
 func toChatMessage(m entity.Message, botID string) entity.ChatMessage {
 	role := entity.RoleUser
 	if botID != "" && m.UserID == botID {
 		role = entity.RoleAssistant
 	}
-	return entity.ChatMessage{Role: role, Parts: []entity.ContentPart{{Type: entity.PartTypeText, Text: m.ForLLM()}}}
+	return entity.ChatMessage{Role: role, Parts: []entity.ContentPart{{Type: entity.PartTypeText, Text: speakerText(m)}}}
+}
+
+// speakerText 返回消息的 LLM 文本视图；群聊消息带发送者前缀（区分不同说话人）。
+// 格式 "[QQ号]: 内容" 与压缩输入（buildLevel1UserPrompt，架构 §5）对齐——QQ 号是唯一说话人标识，
+// agent 可据此跟踪「谁说了什么」；bot 自己的消息同样带前缀（其 QQ 即自身标识，角色仍为 assistant）。
+// 私聊对方唯一且 ② 会话画像已标「用户 ID」，不加前缀避免噪音。
+func speakerText(m entity.Message) string {
+	if m.MessageType != "group" || m.UserID == "" {
+		return m.ForLLM()
+	}
+	return "[" + m.UserID + "]: " + m.ForLLM()
 }
 
 // windowMembers 窗口内去重成员（首次出现顺序），排除 bot 自身（bot 的上下文由其人格承担）。

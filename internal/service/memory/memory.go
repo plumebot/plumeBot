@@ -50,10 +50,22 @@ func NewMemoryService(memory domain.Memory, store domain.Storage, summarizer dom
 	return s
 }
 
-// PersistMessage 持久化一条消息：写入上下文窗口（内存 ring buffer）+ SQLite messages 表，
+// PersistMessage 持久化一条消息到其自身会话：写入上下文窗口（内存 ring buffer）+ SQLite messages 表，
 // 并触达画像缓存（窗口内成员按需加载）。返回窗口是否达到压缩阈值（P3-003 消费该信号触发一级压缩）。
 func (s *MemoryService) PersistMessage(ctx context.Context, msg entity.Message) (bool, error) {
-	full, err := s.memory.AppendMessage(ctx, msg)
+	return s.persist(ctx, msg.SessionKey(), msg)
+}
+
+// PersistMessageToSession 持久化一条消息到指定会话（显式会话键，不依赖消息自身 SessionKey）。
+// 供 event respond 持久化 bot 自身回复：私聊下 bot 回复的作者（botID）会派生独立会话
+// "private:"+botID，必须显式并入触发消息（用户）的会话，bot 回复才进得了用户对话窗（见 event.go）。
+func (s *MemoryService) PersistMessageToSession(ctx context.Context, sessionID string, msg entity.Message) (bool, error) {
+	return s.persist(ctx, sessionID, msg)
+}
+
+// persist 共享落库路径：按会话键写窗口 → SQLite → 画像缓存触达。
+func (s *MemoryService) persist(ctx context.Context, sessionID string, msg entity.Message) (bool, error) {
+	full, err := s.memory.AppendToSession(ctx, sessionID, msg)
 	if err != nil {
 		return false, err
 	}

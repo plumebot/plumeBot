@@ -134,3 +134,30 @@ func TestPersistMessageSignalsCompressionAtCap(t *testing.T) {
 		t.Errorf("SQLite 应持久化 %d 条, 实际 %d", WindowCap, len(store.saved))
 	}
 }
+
+// TestPersistMessageToSessionExplicitSession 持久化到显式会话（私聊 bot 回复场景）：消息作者（botID）
+// 自身 SessionKey 派生 "private:bot"，目标会话为触发用户 "private:u1"，应入目标会话且自身会话无孤儿。
+func TestPersistMessageToSessionExplicitSession(t *testing.T) {
+	store := &fakeStorage{}
+	svc := NewMemoryService(NewWindow(), store, &fakeSummarizer{}, BuilderConfig{})
+	botMsg := entity.Message{
+		MessageID: "self:1", UserID: "bot", MessageType: "private", Parts: textParts("ok"),
+	}
+	full, err := svc.PersistMessageToSession(context.Background(), "private:u1", botMsg)
+	if err != nil {
+		t.Fatalf("持久化失败: %v", err)
+	}
+	if full {
+		t.Error("首条消息不应触发压缩信号")
+	}
+	win, _ := svc.GetWindow(context.Background(), "private:u1")
+	if len(win) != 1 || win[0].UserID != "bot" {
+		t.Errorf("目标会话应含 bot 回复: %+v", win)
+	}
+	if own, _ := svc.GetWindow(context.Background(), "private:bot"); len(own) != 0 {
+		t.Errorf("消息自身会话不应产生孤儿: %+v", own)
+	}
+	if len(store.saved) != 1 || store.saved[0].MessageID != "self:1" {
+		t.Errorf("SQLite 应持久化 bot 回复: %+v", store.saved)
+	}
+}

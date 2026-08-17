@@ -152,7 +152,11 @@ func main() {
 	)
 	// P5-001 触发控制：注入全局 cfg.Control.Mode（空 → mention 兜底）与存储（读 per-group group_config）。
 	controlSvc := control.NewControlService(cfg.Control, storageInfra)
-	eventSvc := event.NewEventService(agentSvc, memorySvc, pluginSvc, controlSvc, cfg.Middleware)
+	// P6-002：注入 bot 自身 QQ 号（BuildMessages 的 assistant 角色映射 + bot 回复 UserID）。
+	eventSvc := event.NewEventService(agentSvc, memorySvc, pluginSvc, controlSvc, cfg.Middleware, cfg.Bot.SelfID)
+	if cfg.Bot.SelfID == "" {
+		logger.Warn("bot.self_id 未配置：窗口内 bot 消息将渲染为 user 角色，assistant 角色映射失效")
+	}
 
 	// 4. 注入 handler
 	msgHandler := handler.NewMessageHandler(eventSvc)

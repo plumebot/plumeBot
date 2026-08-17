@@ -65,8 +65,11 @@ func (c *Client) registerMatchers() {
 			)
 			return
 		}
+		// B-003：matcher 闭包构造 per-event 的 domain.Sender（持有 *zero.Ctx）经 WithSender 注入 ctx；
+		// 需回复的环节（agent 回复、插件回复）经 SenderFrom(ctx).Send 直接发送，Handler 链签名不变。
 		// 消息日志统一由 service/event 日志中间件记录，这里不重复打 Info。
-		if err := c.msg.Handle(context.Background(), msg); err != nil {
+		sendCtx := domain.WithSender(context.Background(), newSender(ctx))
+		if err := c.msg.Handle(sendCtx, msg); err != nil {
 			if reply := decideReply(err); reply != "" {
 				// ctx.Send 自动回事件来源（群回群、私聊回私聊），发送失败由 ZeroBot 内部记录。
 				ctx.Send(reply)

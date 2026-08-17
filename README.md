@@ -64,4 +64,4 @@ plumebot/
 
 ## 当前阶段
 
-第六阶段：联调验收（P6-001 Prompt 组装已完结，P6-002 完整消息链路待实现）。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。
+第六阶段：联调验收（P6-001 Prompt 组装已完结，P6-002 完整消息链路已完结，P6-003 稳定性验证待实现）。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。

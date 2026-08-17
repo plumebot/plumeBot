@@ -1,0 +1,41 @@
+# docker-compose.yml — 启动 NapCat（OneBot v11 实现），供 PlumeBot 正向 WebSocket 连接。
+# 本文件入库（无密钥）：ACCOUNT 优先从 .env 的 PLUMEBOT_SELFID 读取（未设置退回 ACCOUNT）、
+# WEBUI_TOKEN 从 .env 读取（docker compose 自动加载 .env 做 ${VAR} 插值），密钥不入库；.env 模板见 .env.example。
+#
+# 使用步骤：
+#   1. 在 .env 里填 PLUMEBOT_SELFID（QQ 号，ACCOUNT 可留空兜底）与 WEBUI_TOKEN（WebUI 密码）。
+#   2. 启动：docker compose up -d
+#   3. 首次登录：docker compose logs -f napcat  看容器日志里的二维码，用手机 QQ 扫码。
+#   4. 登录成功后，PlumeBot 连接地址为 ws://127.0.0.1:3001
+#      （与 config.yaml 的 onebot.ws_url 默认值一致，无需改动）。
+#
+# 数据卷：使用 Docker 命名卷（napcat-config / napcat-qq），数据由 Docker 管理、
+# 不落入项目目录；登录态持久化在 napcat-qq，重启免重复扫码。查看/备份：
+#   docker volume ls（前缀为项目名）  docker volume inspect plumebot_napcat-qq
+# 镜像：本地已下载的 mlikiowa/napcat-docker:latest，按 digest 固定引用（不自动拉新）。
+
+services:
+  napcat:
+    image: mlikiowa/napcat-docker@sha256:85825671fd536e7a46ccf5472fd7efae7053150ec1042ae4c4f1e0fb62f815fd
+    container_name: napcat
+    restart: unless-stopped
+    environment:
+      # 必填：QQ 账号。优先取 .env 的 PLUMEBOT_SELFID（与 bot.self_id 共用同一来源，见 config/CLAUDE.md），
+      # 未设置时退回 ACCOUNT（登录态持久化在命名卷 napcat-qq，重启不再需要扫码）
+      ACCOUNT: "${PLUMEBOT_SELFID:-${ACCOUNT:-}}"
+      # OneBot v11 正向 WebSocket server（PlumeBot 连接 ws://127.0.0.1:3001）
+      MODE: ws
+      WS_ENABLE: "true"
+      # WebUI 管理台密码（http://127.0.0.1:6099，来自 .env 的 WEBUI_TOKEN）
+      WEBUI_TOKEN: "${WEBUI_TOKEN:-}"
+      TZ: Asia/Shanghai
+    ports:
+      - "3001:3001" # OneBot v11 WS server（PlumeBot 正连）
+      - "6099:6099" # NapCat WebUI
+    volumes:
+      - napcat-config:/app/napcat/config # NapCat 配置（config/onebot11_<qq>.json 等）
+      - napcat-qq:/root/.config/QQ       # QQ 登录会话
+
+volumes:
+  napcat-config:
+  napcat-qq:

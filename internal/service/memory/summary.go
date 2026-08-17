@@ -21,7 +21,8 @@ const summaryReloadLimit = SummaryCap
 //
 // 热链：当前参与对话上下文的最新摘要，参与二级融合与 FIFO 淘汰。
 // 归档：离开热链的摘要（被融合覆盖 / 被淘汰）落库 conversation_summary 表，
-//       会话首次触达时惰性回灌最新若干条作为热链底 —— 重启后 AI 仍保有长程历史。
+//
+//	会话首次触达时惰性回灌最新若干条作为热链底 —— 重启后 AI 仍保有长程历史。
 //
 // 幂等性：落库以 (chat_id, seq) 为键 upsert，回灌的旧摘要再次离开热链时重复归档不产生冗余。
 type SummaryStore struct {

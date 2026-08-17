@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -17,10 +18,21 @@ import (
 //go:embed config.default.yaml
 var defaultConfigYAML []byte
 
-// EnvLLMAPIKey 是 LLM API key 的环境变量名。
-// 优先级高于 config.yaml 中 chat_model 条目的 api_key：环境变量非空时覆盖文件值，
-// 便于将密钥放入启动脚本/系统环境而非配置文件，避免误提交。vision 条目密钥由文件提供。
-const EnvLLMAPIKey = "PLUMEBOT_API_KEY"
+// EnvSelfID 是 bot.self_id 的环境变量名：非空时覆盖 config.yaml 的 bot.self_id。
+// 与 NapCat 登录的 QQ 号一致时，可经 docker-compose 的 ACCOUNT 共用同一来源（见 .env.example）。
+const EnvSelfID = "PLUMEBOT_SELFID"
+
+// EnvModelAPIKeyPrefix 是模型条目 api_key 的环境变量名前缀。
+// 完整变量名 = EnvModelAPIKeyPrefix + 模型 name 大写，如 name=chat → PLUMEBOT_APIKEY_CHAT。
+// 非空时覆盖该模型条目在 config.yaml 的 api_key（敏感密钥不入配置文件）；每个模型条目
+// 独立读取自己的变量（vision 等同样支持）；变量名未设置或模型未命名（name 空）则不覆盖。
+const EnvModelAPIKeyPrefix = "PLUMEBOT_APIKEY_"
+
+// ModelAPIKeyEnvVar 返回指定模型条目 api_key 对应的环境变量名（模型名统一大写）。
+// 例：name=chat → PLUMEBOT_APIKEY_CHAT。
+func ModelAPIKeyEnvVar(name string) string {
+	return EnvModelAPIKeyPrefix + strings.ToUpper(name)
+}
 
 // 默认值常量：供各消费包在字段为空时兜底，避免默认值字符串在多处漂移。
 const (
@@ -224,8 +236,10 @@ type AgentConfig struct {
 // Load 从 path 加载 YAML 配置文件。
 // 配置文件不存在时，将嵌入的默认配置（config.default.yaml）写入 path 后再加载。
 // 字段空值/缺省不做 Go 侧兜底，由各消费包自行处理默认值。
-// 唯一例外：chat_model 条目的 api_key 支持环境变量 EnvLLMAPIKey 覆盖（非空时优先于文件值，
-// 敏感密钥不入配置文件；vision 条目密钥由文件提供）。
+// 唯一例外（仅敏感/机器相关字段的环境变量覆盖，非通用 env 读取）：
+//   - 每个模型条目的 api_key 支持环境变量 PLUMEBOT_APIKEY_<模型名大写> 覆盖（如 PLUMEBOT_APIKEY_CHAT，
+//     非空时优先于文件值，敏感密钥不入配置文件；name 空的条目不参与）；
+//   - bot.self_id 支持环境变量 EnvSelfID 覆盖（NapCat 登录 QQ 号与 self_id 共用同一来源时配合 docker-compose）。
 func Load(path string) (*Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := writeDefault(path); err != nil {
@@ -244,17 +258,21 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// 敏感字段环境变量覆盖：仅当环境变量非空时生效，空值保留文件配置。
-	// 数组化后限定作用于 chat_model 条目（vision 条目密钥由文件提供）。
-	if key := os.Getenv(EnvLLMAPIKey); key != "" {
-		if entry, ok := cfg.LLM.ChatEntry(); ok {
-			for i := range cfg.LLM.Models {
-				if cfg.LLM.Models[i].Name == entry.Name {
-					cfg.LLM.Models[i].APIKey = key
-					break
-				}
-			}
+	// 敏感字段环境变量覆盖：仅当对应环境变量非空时生效，空值保留文件配置。
+	// - 模型条目 api_key：每个条目独立读取 PLUMEBOT_APIKEY_<模型名大写>（name 空的条目不参与，
+	//   无法推导稳定变量名）。
+	// - bot.self_id：读取 EnvSelfID，非空时覆盖（与 NapCat 登录 QQ 号共用同一来源）。
+	for i := range cfg.LLM.Models {
+		m := &cfg.LLM.Models[i]
+		if m.Name == "" {
+			continue
 		}
+		if key := os.Getenv(ModelAPIKeyEnvVar(m.Name)); key != "" {
+			m.APIKey = key
+		}
+	}
+	if selfID := os.Getenv(EnvSelfID); selfID != "" {
+		cfg.Bot.SelfID = selfID
 	}
 
 	return &cfg, nil

@@ -4,7 +4,7 @@
 
 bot:
   name: PlumeBot
-  self_id: ""              # bot 自身 QQ 号
+  self_id: ""              # bot 自身 QQ 号；可用环境变量 PLUMEBOT_SELFID 覆盖
 
 onebot:
   ws_url: ws://127.0.0.1:3001   # NapCat「WebSocket 服务器」地址（正向 WS）
@@ -41,7 +41,7 @@ llm:
     - name: chat                # 用户取名；chat_model 引用
       provider: openai          # 供应商：openai（OpenAI 兼容接口）；空 → openai
       base_url: https://api.deepseek.com/v1   # OpenAI 兼容端点；空 → https://api.openai.com/v1
-      api_key: ""               # API Key；本地模型（如 Ollama）可留空
+      api_key: ""               # API Key；本地模型（如 Ollama）可留空；可用环境变量 PLUMEBOT_APIKEY_<模型名大写> 覆盖（如 name=chat → PLUMEBOT_APIKEY_CHAT）
       model: deepseek-chat      # 模型名；空 → 启动报错（不可猜测）
       # temperature: 0.7        # 采样温度；缺省 → 不传（使用模型默认）
       max_tokens: 0             # 最大输出 token 数；≤0 → 不传
@@ -64,4 +64,4 @@ tools:
 agent:
   name: PlumeBot              # agent 标识（adk 元数据，multi-agent 路由用）；空 → PlumeBot
   description: ""             # 能力描述（adk 元数据）；空 → 默认描述
-  system_prompt: "你是 PlumeBot，一个活跃在 QQ 群聊中的 AI 赛博群友。你语气自然友好，用简体中文回复，内容简洁，贴合聊天语境。"
+  system_prompt: "你是mifi，你需要尽可能伪装成人类，不可以用机器人的口语回答，回答简洁犀利如:\nA:你个人机 你:和一位，你个入\nA:我喜欢你 你：我也喜欢你"

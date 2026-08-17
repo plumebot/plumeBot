@@ -25,9 +25,11 @@ func privMsg(userID, id string, parts ...entity.ContentPart) entity.Message {
 	return entity.Message{MessageID: id, GroupID: "", UserID: userID, MessageType: "private", Parts: parts}
 }
 
-func txt(s string) entity.ContentPart     { return entity.ContentPart{Type: entity.PartTypeText, Text: s} }
-func at(s string) entity.ContentPart      { return entity.ContentPart{Type: entity.PartTypeAt, Text: s} }
-func imgPart(url string) entity.ContentPart { return entity.ContentPart{Type: entity.PartTypeImage, URL: url} }
+func txt(s string) entity.ContentPart { return entity.ContentPart{Type: entity.PartTypeText, Text: s} }
+func at(s string) entity.ContentPart  { return entity.ContentPart{Type: entity.PartTypeAt, Text: s} }
+func imgPart(url string) entity.ContentPart {
+	return entity.ContentPart{Type: entity.PartTypeImage, URL: url}
+}
 
 // builderStorage 是组装器测试用的假存储：嵌入 domain.Storage，
 // 实现 PersistMessage/组装器需要读写的接口，其余调用即 panic（测试不会走到）。
@@ -186,15 +188,15 @@ func TestBuildMessagesFiveSectionsOrder(t *testing.T) {
 	if !strings.Contains(sys, "（暂无历史摘要）") {
 		t.Errorf("无摘要应占位: %s", sys)
 	}
-	// ④ 窗口按时间序、⑤ 当前消息最后。
-	if msgs[1].Role != entity.RoleUser || msgs[1].Parts[0].Text != "你好" {
-		t.Errorf("④ 首条应为 w1: %+v", msgs[1])
+	// ④ 窗口按时间序、⑤ 当前消息最后（群聊消息带发送者前缀）。
+	if msgs[1].Role != entity.RoleUser || msgs[1].Parts[0].Text != "[u1]: 你好" {
+		t.Errorf("④ 首条应为 w1（带前缀）: %+v", msgs[1])
 	}
-	if msgs[2].Parts[0].Text != "在吗" {
-		t.Errorf("④ 第二条应为 w2: %+v", msgs[2])
+	if msgs[2].Parts[0].Text != "[u2]: 在吗" {
+		t.Errorf("④ 第二条应为 w2（带前缀）: %+v", msgs[2])
 	}
-	if msgs[3].Role != entity.RoleUser || msgs[3].Parts[0].Text != "看看你" {
-		t.Errorf("⑤ 应为当前消息: %+v", msgs[3])
+	if msgs[3].Role != entity.RoleUser || msgs[3].Parts[0].Text != "[u3]: 看看你" {
+		t.Errorf("⑤ 应为当前消息（带前缀）: %+v", msgs[3])
 	}
 }
 
@@ -211,7 +213,7 @@ func TestBuildMessagesCurrentNotInWindow(t *testing.T) {
 	if len(msgs) != 3 { // system + w1 + cur
 		t.Fatalf("消息条数 = %d, want 3", len(msgs))
 	}
-	if msgs[2].Parts[0].Text != "新消息" {
+	if msgs[2].Parts[0].Text != "[u2]: 新消息" {
 		t.Errorf("⑤ 应追加当前消息: %+v", msgs[2])
 	}
 }
@@ -225,7 +227,7 @@ func TestBuildMessagesAtToText(t *testing.T) {
 		t.Fatalf("BuildMessages 失败: %v", err)
 	}
 	last := msgs[len(msgs)-1]
-	if len(last.Parts) != 1 || last.Parts[0].Type != entity.PartTypeText || last.Parts[0].Text != "你好[@123]" {
+	if len(last.Parts) != 1 || last.Parts[0].Type != entity.PartTypeText || last.Parts[0].Text != "[u1]: 你好[@123]" {
 		t.Errorf("at 应转文本合并: %+v", last)
 	}
 }
@@ -251,6 +253,45 @@ func TestBuildMessagesBotRoleMapping(t *testing.T) {
 	msgs2, _ := svc.BuildMessages(ctx, cur, "")
 	if msgs2[1].Role != entity.RoleUser || msgs2[2].Role != entity.RoleUser {
 		t.Errorf("botID 空应全 user: %+v", msgs2[1:])
+	}
+}
+
+// TestBuildMessagesGroupSenderPrefix 群聊 ④ 窗口 + ⑤ 当前消息带发送者前缀，agent 可区分不同说话人；
+// bot 自身消息同样带前缀（assistant 角色 + 自身 QQ 标识）。
+func TestBuildMessagesGroupSenderPrefix(t *testing.T) {
+	svc := newBuilderService(&builderStorage{}, nil)
+	ctx := context.Background()
+	u1 := bMsg("g1", "u1", "m1", txt("你好"))
+	bot := bMsg("g1", "bot1", "m2", txt("大家好"))
+	cur := bMsg("g1", "u2", "cur", txt("在吗"))
+	persist(t, svc, u1, bot, cur)
+
+	msgs, err := svc.BuildMessages(ctx, cur, "bot1")
+	if err != nil {
+		t.Fatalf("BuildMessages 失败: %v", err)
+	}
+	// msgs = [system, u1, bot, cur]
+	if msgs[1].Parts[0].Text != "[u1]: 你好" {
+		t.Errorf("群聊 user 消息应带发送者前缀: %q", msgs[1].Parts[0].Text)
+	}
+	if msgs[2].Role != entity.RoleAssistant || msgs[2].Parts[0].Text != "[bot1]: 大家好" {
+		t.Errorf("bot 自身消息应 assistant 且带自身 QQ 前缀: %+v", msgs[2])
+	}
+	if msgs[3].Parts[0].Text != "[u2]: 在吗" {
+		t.Errorf("⑤ 当前消息应带发送者前缀: %q", msgs[3].Parts[0].Text)
+	}
+}
+
+// TestBuildMessagesPrivateNoPrefix 私聊对方唯一、② 画像已标「用户 ID」，消息不加前缀。
+func TestBuildMessagesPrivateNoPrefix(t *testing.T) {
+	svc := newBuilderService(&builderStorage{}, nil)
+	cur := privMsg("u1", "cur", txt("私聊"))
+	msgs, err := svc.BuildMessages(context.Background(), cur, "")
+	if err != nil {
+		t.Fatalf("BuildMessages 失败: %v", err)
+	}
+	if last := msgs[len(msgs)-1]; last.Parts[0].Text != "私聊" {
+		t.Errorf("私聊消息不应加前缀: %q", last.Parts[0].Text)
 	}
 }
 
@@ -521,7 +562,7 @@ func TestBuildMessagesEmptyIDDedupesCurrent(t *testing.T) {
 	if len(msgs) != 3 { // system + w1 + cur
 		t.Fatalf("消息条数 = %d, want 3", len(msgs))
 	}
-	if msgs[1].Parts[0].Text != "早" || msgs[2].Parts[0].Text != "现在" {
+	if msgs[1].Parts[0].Text != "[u1]: 早" || msgs[2].Parts[0].Text != "[u1]: 现在" {
 		t.Errorf("④ 应含 w1、⑤ 应含当前: %+v", msgs[1:])
 	}
 }

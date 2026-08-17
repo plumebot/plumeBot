@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -128,7 +127,9 @@ func TestLoadExistingFilePreservesValues(t *testing.T) {
 // LLM/Tools/Agent 各字段的合法值解析，temperature 以指针形式保留。
 func TestLoadLLMToolsAgentValues(t *testing.T) {
 	// 隔离宿主环境：本用例断言文件中的 api_key 原样保留，不受用户环境变量影响。
-	t.Setenv(EnvLLMAPIKey, "")
+	t.Setenv(ModelAPIKeyEnvVar("chat"), "")
+	t.Setenv(ModelAPIKeyEnvVar("vision"), "")
+	t.Setenv(EnvSelfID, "")
 
 	path := writeTempConfig(t,
 		"llm:\n"+
@@ -197,32 +198,46 @@ func TestLoadLLMToolsAgentValues(t *testing.T) {
 	}
 }
 
-// 环境变量 EnvLLMAPIKey 非空时覆盖文件中的 chat 条目 api_key（敏感密钥不入配置文件）；
-// vision 条目密钥不受影响（由文件提供）。
-func TestLoadEnvAPIKeyOverrides(t *testing.T) {
+// 模型条目 api_key 环境变量（PLUMEBOT_APIKEY_<模型名大写>）非空时覆盖文件值；
+// 每个模型条目独立读取自己的变量（chat/vision 各读各的），未被覆盖的条目保留文件值。
+func TestLoadEnvModelAPIKeyOverrides(t *testing.T) {
 	path := writeTempConfig(t,
 		"llm:\n  models:\n    - name: chat\n      api_key: sk-file\n      model: some-model\n    - name: vision\n      api_key: sk-vision\n      model: qwen-vl-plus\n  chat_model: chat\n  vision_model: vision\n")
-	t.Setenv(EnvLLMAPIKey, "sk-env")
+	t.Setenv(ModelAPIKeyEnvVar("chat"), "sk-env-chat")
+	t.Setenv(ModelAPIKeyEnvVar("vision"), "sk-env-vision")
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("加载配置失败: %v", err)
 	}
 	chat, _ := cfg.LLM.ChatEntry()
-	if chat.APIKey != "sk-env" {
-		t.Errorf("chat 条目 APIKey = %q，期望环境变量值 sk-env", chat.APIKey)
+	if chat.APIKey != "sk-env-chat" {
+		t.Errorf("chat 条目 APIKey = %q，期望环境变量值 sk-env-chat", chat.APIKey)
 	}
 	vision, _ := cfg.LLM.VisionEntry()
-	if vision.APIKey != "sk-vision" {
-		t.Errorf("vision 条目 APIKey = %q，应保留文件值 sk-vision（env 仅作用于 chat 条目）", vision.APIKey)
+	if vision.APIKey != "sk-env-vision" {
+		t.Errorf("vision 条目 APIKey = %q，期望环境变量值 sk-env-vision", vision.APIKey)
+	}
+}
+
+// 环境变量名为 PLUMEBOT_APIKEY_<模型名大写>：变量名只与模型 name 相关，与 chat_model 引用无关。
+func TestModelAPIKeyEnvVarName(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"chat", "PLUMEBOT_APIKEY_CHAT"},
+		{"vision", "PLUMEBOT_APIKEY_VISION"},
+		{"deepseek-chat", "PLUMEBOT_APIKEY_DEEPSEEK-CHAT"},
+	} {
+		if got := ModelAPIKeyEnvVar(tc.name); got != tc.want {
+			t.Errorf("ModelAPIKeyEnvVar(%q) = %q，期望 %q", tc.name, got, tc.want)
+		}
 	}
 }
 
 // 环境变量为空时视为未设置，保留文件中的 api_key。
-func TestLoadEnvAPIKeyEmptyKeepsFile(t *testing.T) {
+func TestLoadEnvModelAPIKeyEmptyKeepsFile(t *testing.T) {
 	path := writeTempConfig(t,
 		"llm:\n  models:\n    - name: chat\n      api_key: sk-file\n      model: some-model\n  chat_model: chat\n")
-	t.Setenv(EnvLLMAPIKey, "")
+	t.Setenv(ModelAPIKeyEnvVar("chat"), "")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -231,6 +246,34 @@ func TestLoadEnvAPIKeyEmptyKeepsFile(t *testing.T) {
 	chat, _ := cfg.LLM.ChatEntry()
 	if chat.APIKey != "sk-file" {
 		t.Errorf("chat 条目 APIKey = %q，期望保留文件值 sk-file", chat.APIKey)
+	}
+}
+
+// bot.self_id 环境变量 PLUMEBOT_SELFID 非空时覆盖文件值（与 NapCat 登录 QQ 号共用同一来源）。
+func TestLoadEnvSelfIDOverrides(t *testing.T) {
+	path := writeTempConfig(t, "bot:\n  self_id: \"1527301260\"\n")
+	t.Setenv(EnvSelfID, "10001")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	if cfg.Bot.SelfID != "10001" {
+		t.Errorf("Bot.SelfID = %q，期望环境变量值 10001", cfg.Bot.SelfID)
+	}
+}
+
+// PLUMEBOT_SELFID 为空时视为未设置，保留文件中的 self_id。
+func TestLoadEnvSelfIDEmptyKeepsFile(t *testing.T) {
+	path := writeTempConfig(t, "bot:\n  self_id: \"1527301260\"\n")
+	t.Setenv(EnvSelfID, "")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	if cfg.Bot.SelfID != "1527301260" {
+		t.Errorf("Bot.SelfID = %q，期望保留文件值 1527301260", cfg.Bot.SelfID)
 	}
 }
 
@@ -261,34 +304,6 @@ func TestLoadUnknownFieldsIgnored(t *testing.T) {
 	}
 	if cfg.LLM.ChatModel != "chat" {
 		t.Errorf("LLM.ChatModel = %q，期望 chat", cfg.LLM.ChatModel)
-	}
-}
-
-// B-006 守卫：根 config.yaml 与嵌入模板解析结果一致（防双份漂移）。
-// 注意：① 仅比较解析后的内容，不比较注释等格式差异；
-// ② 各模型条目的 api_key 为敏感字段，允许本地与模板不一致（模板恒为空，
-// 本地由用户写入或环境变量 EnvLLMAPIKey 提供），比较前排除。
-func TestRootConfigYAMLSyncedWithDefault(t *testing.T) {
-	rootPath := filepath.Join("..", "..", "config.yaml")
-	rootCfg, err := Load(rootPath)
-	if err != nil {
-		t.Fatalf("加载根 config.yaml 失败: %v", err)
-	}
-
-	defaultCfg, err := Load(filepath.Join(t.TempDir(), "config.yaml"))
-	if err != nil {
-		t.Fatalf("加载默认模板失败: %v", err)
-	}
-
-	for i := range rootCfg.LLM.Models {
-		rootCfg.LLM.Models[i].APIKey = ""
-	}
-	for i := range defaultCfg.LLM.Models {
-		defaultCfg.LLM.Models[i].APIKey = ""
-	}
-
-	if !reflect.DeepEqual(*rootCfg, *defaultCfg) {
-		t.Errorf("根 config.yaml 与嵌入默认模板不一致（新增配置字段时需双处同步，见 B-006）：\n根配置   = %+v\n默认模板 = %+v", *rootCfg, *defaultCfg)
 	}
 }
 

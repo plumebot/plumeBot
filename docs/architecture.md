@@ -22,7 +22,7 @@
 | Agent 引擎 | eino (CloudWeGo) | 字节跳动开源 AI Agent 框架，支持 ChatModelAgent / DeepAgent / Compose |
 | 存储 | SQLite + modernc.org/sqlite | 纯 Go 驱动，无 cgo |
 | 日志 | uber/zap | 高性能结构化日志 |
-| 配置 | gopkg.in/yaml.v3 | YAML 格式配置文件 |
+| 配置 | spf13/viper | YAML 配置文件（`config.yaml`）；仅敏感/机器字段支持环境变量覆盖（模型 api_key 经 `PLUMEBOT_APIKEY_<模型名大写>`、self_id 经 `PLUMEBOT_SELFID`，见 CLAUDE.md §6.6） |
 | 向量检索 | LLM API embedding（默认关闭） | 可选开启，调 LLM embedding 接口；关闭时走 SQLite 关键词+时间检索 |
 | 插件 | 子进程 stdio（HashiCorp go-plugin，net/rpc 变体） | 原 .so 方案因 Windows 不可用废弃；插件按自定义指令集协议返回结构化结果（见 §8.6） |
 | 测试 | Go 标准库 testing | 零额外依赖 |
@@ -61,6 +61,11 @@ ZeroBot (连接层，只管收发)
 > **会话键约定**：群聊 = `GroupID`，私聊 = `private:`+UserID，贯穿上下文窗口、摘要归档
 > （`conversation_summary.chat_id`）、`bot_state` 运行态与触发控制状态（§9.2）。
 > 统一由 `entity.Message.SessionKey()` 派生（P5-002 消重后单一事实来源）。
+>
+> **例外（P6-002 修复）**：私聊 bot 自身回复的作者是 botID，按自身 `SessionKey()` 会派生
+> `private:`+botID 独立会话，回复将永远进不了用户对话窗；由 event respond 经
+> `MemoryService.PersistMessageToSession` 显式并入触发消息（用户）的会话，bot 回复与用户消息同窗
+> （SQLite 落库仍记 botID 作者不变）。
 
 ### 4.1 上下文窗口（短期）
 
@@ -75,8 +80,8 @@ ZeroBot (连接层，只管收发)
   - 该 API 不支持关键词搜索，关键词检索走本地 SQLite
 - 锁粒度：**每会话一把锁（per-session）**，不同群/私聊的窗口操作互不阻塞，单会话内串行保序
   （`Window` 用 `sync.Map` 注册表 + 每会话 `sync.Mutex`，与 §9.2 service/control 的 per-session 锁同模式）。
-  注意：此锁只保护窗口内部数据结构，不覆盖 `GetWindow` 浅拷贝逃逸出的 Parts 数组——
-  同会话 BuildMessages 与窗口压缩的数组读写约束见 roadmap B-040。
+  `GetWindow` 深拷贝 Parts（B-040 定案，P6-002）：组装/压缩各持独立快照，无逃逸数组竞态；
+  图片描述经 `BackfillParts` 窗口锁内深拷贝回填，无跨 LLM 持锁，同会话组装与压缩互不阻塞。
 - 作用：直接拼入 prompt 让 Agent 知道"刚刚在聊什么"
 
 ### 4.2 成员记忆（私聊 / 群聊，中期）
@@ -170,6 +175,10 @@ Agent 通过 eino Tool 机制驱动记忆更新，在对话中自行判断何时
 > ② 会话画像 = 群画像（group_profile）+ 窗口内成员事实（member_facts，每成员各 N 条）。
 > 成员事实与 confirmed 黑话均「读在组装」现查注入（§4.3.1，上限见 `llm.prompt`，P6-001 落地）；
 > 私聊无群画像，② 仅含当前用户成员事实（group_id 空）。
+>
+> ④/⑤ 渲染（P6-002 扩展）：群聊消息带发送者前缀 `[QQ号]: 内容`（bot 自身消息同，QQ 即其标识，
+> 角色仍为 assistant）——格式与压缩输入（§5.1 buildLevel1UserPrompt）对齐，agent 可据此区分
+> 不同说话人；私聊对方唯一、② 已标「用户 ID」，不加前缀。
 
 ---
 
@@ -261,9 +270,10 @@ P6-001 起：`service/memory BuildMessages` 每次组装按 `cfg.Agent.Name` 现
     与 `at`（`""` / `"sender"` / 具体 user_id）；
   - `Actions`：附加动作，强类型枚举 `GroupOp`（`mute` / `unmute` / `kick` / `set_card`），
     对齐 B-015 `domain.GroupManager` 能力集。
-- **执行范围（P4-002 定案）**：本期**只定义协议 + 宿主校验**（`Validate()` 校验枚举/必填字段），
-  收到的 Result 校验后记录、**不执行**——回复发送归 P6-002（B-003 Sender），群管理动作执行归 B-015
-  （GroupManager + per-group 开关 + 管理员校验）。协议完整定义，保证插件可表达这些操作，执行器后置。
+- **执行范围（P4-002 定案，P6-002 更新）**：协议完整定义 + 宿主校验（`Validate()` 校验枚举/必填字段）。
+  插件零权限只声明意图，宿主唯一执行者。**回复执行已落地**：校验通过的 `Reply` 由 event 命令分支经
+  B-003 `domain.Sender` 发送（P6-002，文本/图片/引用/@，见 §10.2）；群管理动作 `Actions` 仍**不执行**
+  ——归 B-015（GroupManager + per-group 开关 + 管理员校验）。
 - **协议类型落点**：`internal/domain/entity`（业务实体，单一事实来源）；`infra/plugin_exe` 内含
   go-plugin 的 RPC 接线（宿主/插件共用，import domain/entity）。插件与宿主同 module 编译，gob 类型天然一致。
 
@@ -316,9 +326,10 @@ per-group `group_config` 列（非 0/非空）→ 全局 `cfg.Control.state` →
 （`short_message`/`quiet_hours`/`low_energy`/`cooldown`，B-023 定名，已完结）。
 
 **运行态**：精力/冷却/连续计数存 `bot_state.state` JSON（`group_state` 结构），每群一条；
-私聊独立一行（key=`"private:"+UserID`，与 §4 会话键一致）。`OnReplied` 在 event 管线
-触发回复时回调（P5-002 起 judgeReply 接线；P6-002 回复真实发出后由发送环节调用），
-消耗精力、记冷却、递增连续计数。主动发言 DB 故障 fail-closed（不主动刷屏）；强制回复不读状态、故障必回。
+私聊独立一行（key=`"private:"+UserID`，与 §4 会话键一致）。`OnReplied` 在 **发送成功环节**回调
+（P6-002 定案，B-038：event 管线 respond 在 `domain.Sender.Send` 成功后才调用，移除 judge 触发点，
+防同一消息重复记账），消耗精力、记冷却、递增连续计数。主动发言 DB 故障 fail-closed（不主动刷屏）；
+强制回复不读状态、故障必回。发送失败 / Agent 推理失败 = bot 未说话，不记账、不追加窗口。
 
 ---
 
@@ -352,8 +363,10 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
         └── 群聊 → 按触发模式走 Agent / 忽略
 ```
 
-> 注（P6-002 前）：插件分支当前仅校验指令集并记录（§8.6，不发送）；普通消息触发判断只标记 +
-> OnReplied 更新运行态（§9.2），不调 Agent、不发送回复。上图为 P6-002 目标态。
+> 注（P6-002 已实现）：插件分支校验指令集后，回复（`Reply`）经 ctx 内 `domain.Sender` 执行发送
+> （§8.6 / B-017），群管理动作（`Actions`）仍只记录不执行（B-015）；普通消息触发判断命中后走
+> 完整回复闭环：拼 prompt（§6）→ Agent 推理（记忆工具经 ctx 会话身份写入）→ 经 `domain.Sender`
+> 发送（§9.2 OnReplied 在发送成功环节记账）。上图为已实现链路。
 
 ### 10.3 通知管线（规则处理）
 
@@ -496,5 +509,6 @@ NapCat → OneBot WS → ZeroBot
               → 回复
 ```
 
-> 注（P6-002 前）：当前链路止于「触发判断 + OnReplied 更新运行态」（§9.2），不进入
-> context.Build / Agent 推理 / 回复——回复发送归 P6-002（B-003）。此图为完整目标态。
+> 注（P6-002 已实现）：链路已完整——普通消息触发命中后走 context.Build → agent service →
+> eino 推理（Tool 调用写记忆）→ 经 `domain.Sender` 发送回复（B-003，发送成功才 OnReplied 记账，
+> 见 §9.2 / B-038）→ 窗口追加 bot 回复；命令消息插件回复同样经 Sender 发送（B-017）。

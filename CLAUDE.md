@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第六阶段：联调验收（P6-001 Prompt 组装已完结） |
+| 当前阶段 | 第六阶段：联调验收（P6-001 Prompt 组装、P6-002 完整消息链路已完结，P6-003 待实现） |
 | 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B 台账，完成即删行） |
 
 ```bash
@@ -103,11 +103,11 @@ persona 重构为 agent 绑定人格模板，见架构 §7）。
 见架构 §7。注：Instruction 注入已由 P6-001 修订为 service 组装注入 system 消息，见 §5.6）。
 已完成：P4-002 插件系统（go-plugin 子进程 + 指令集协议：entity.PluginRequest/PluginResult{Reply, Actions}，
 internal/infra/plugin_exe 做 go-plugin net/rpc 接线（手写 shim，免 protoc），host 侧 service/plugin 发现路由（plugin.json）+ 命令分发分支；
-只定义协议 + 宿主校验（ValidatePluginResult），不执行回复/动作，见架构 §8.6 与 B-017）。
+只定义协议 + 宿主校验（ValidatePluginResult），不执行回复/动作，见架构 §8.6 与 B-017；回复发送已由 P6-002 落地（B-017），群管理动作仍归 B-015）。
 已完成：第四阶段（人格与插件）全部完结，进入第六阶段。
 已完成：P5-001 触发模式（mention/auto 双模式，per-group group_config 表可独立配置；
 domain.Control 两方法 ShouldReply→Decision + OnReplied；service/control 模式判定 + event tail
-触发判断接线，只标记不发送，发送归 P6-002，见架构 §9 与 B-003）。
+触发判断接线，只标记不发送，发送归 P6-002（已接线，见 P6-002 完成记录），见架构 §9 与 B-003）。
 已完成：P5-002 状态规则（精力/冷却/连续回复/时段/短消息五条纯规则层，不调 LLM；group_config
 扩 10 状态参数列 per-group 覆盖；bot_state 运行态 JSON + OnReplied 接线；会话键统一为
 entity.Message.SessionKey、覆盖逻辑消重，见架构 §9.2）。
@@ -115,12 +115,19 @@ entity.Message.SessionKey、覆盖逻辑消重，见架构 §9.2）。
 persona(现查 persona 表，改库即时生效) + 会话画像(群画像+成员事实+confirmed 黑话，注入上限
 llm.prompt) + 历史摘要 → system，窗口④ + 当前消息⑤；at→text、图片惰性描述(describer 缓存+预算)
 + 描述写回 UpdateMessageParts；persona 不再经 Instruction 注入，见架构 §6/§7.3 与 §5.6）。
+已完成：第六阶段 P6-002 完整消息链路（回复闭环接线，见架构 §9.2/§10.2/§14.4 与 roadmap P6-002）：
+触发判断命中 → BuildMessages → Agent GenerateReply（记忆工具经 ctx 注入的 Session 写入 member_facts/
+group_jargon）→ 经 ctx 内 domain.Sender 发送（B-003：matcher 闭包注入 per-event Sender + onebot
+replyToChain 转 message.ReplyWithMessage/At 后 SendChain）→ 发送成功才窗口追加 bot 回复（合成
+`self:` MessageID 规避空串冲突）+ OnReplied 记账（B-038 时序）；插件回复经 Sender 执行（B-017，
+群动作仍归 B-015）；B-040 定案 GetWindow 深拷贝 + BackfillParts 安全回填（组装/压缩无跨 LLM 阻塞、
+常规路径零冗余落库）；Agent 回复群聊被 @ 时仅 @ 触发者、不引用触发消息（避免引用预览带出
+触发消息内的 @bot，见 event.go agentReply）。
 ```
 
 禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：
 
-- 插件回复/动作**执行**（P4-002 只定义协议，回复发送归 P6-002、群管理动作归 B-015，勿提前实装）；
-- 完整 Agent 对话闭环（群聊回复闭环属 P6-002；当前管线末端 tail 仅做持久化（窗口+SQLite）+ 插件命令分发 + P5-001/002 触发判断 + 状态规则（只标记、不发送），Agent 能力由 eino 直调验证）；
+- 群管理动作**执行**（插件 `Actions` 与 AI 自主群管理，mute/unmute/kick/set_card 归 B-015：domain.GroupManager + per-group 开关 + 管理员校验，勿提前实装）；
 - 端到端压测（P6-003）
 
 ## 3. 技术栈
@@ -167,6 +174,7 @@ plumebot/
 │   │   ├── plugin.go               #   Plugin 接口（stub）
 │   │   ├── storage.go              #   Storage 接口（P2-001 已实现）
 │   │   ├── control.go              #   Control 接口（P5-001/002 由 service/control 实现）
+│   │   ├── sender.go               #   Sender 接口 + WithSender/SenderFrom（B-003，由 infra/onebot 实现）
 │   │   └── errors.go               #   哨兵错误 + 参数化错误（SensitiveWordError）
 │   ├── service/                    # 业务编排层，依赖 domain 接口
 │   │   ├── event/                  #   中间件链：日志 → 限流 → 敏感词 → 持久化(tail)
@@ -177,13 +185,13 @@ plumebot/
 │   │   │   └── *_test.go           #     核心单测
 │   │   ├── agent/                  #   薄透传：GenerateReply → domain.Agent
 │   │   ├── memory/                 #   上下文窗口 + 群画像缓存 + 窗口压缩（P3-001/002/003 已实现；成员画像已移除）
-│   │   ├── plugin/                 #   stub
-│   │   └── control/                #   触发判断 + 状态规则（P5-001/002，只标记不发送）
+│   │   ├── plugin/                 #   插件发现/加载/路由分发（P4-002）
+│   │   └── control/                #   触发判断 + 状态规则（P5-001/002，判定/记账，不发送——发送归 event respond）
 │   ├── handler/                    # 事件处理入口（薄胶水，无业务逻辑）
 │   │   ├── message.go              #   消息事件 → event service
 │   │   └── notice.go               #   通知事件 → 规则处理（stub）
 │   └── infra/                      # 基础设施，实现 domain 接口
-│       ├── onebot/                 #   ZeroBot 封装（已接入：matcher 分发 + 固定文案回复）
+│       ├── onebot/                 #   ZeroBot 封装（已接入：matcher 分发 + 固定文案回复 + Sender 实现 B-003）
 │       ├── ai/                     #   eino Agent + 摘要器实现（P2-004 provider 注册中心 + 多模态转换 + tool 机制；P3-003 Summarizer 裸模型单次调用；P3-004 tools/ 记忆更新工具）
 │       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，9 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）
 │       │   └── migrations/        #     DDL 迁移文件（001 单文件，migrate 全量执行）
@@ -194,7 +202,9 @@ plumebot/
 │   └── ahocorasick/                #   Aho-Corasick 多模式匹配（敏感词）
 ├── plugins/                        # 插件目录（运行时，插件子进程可执行文件）
 ├── data/                           # SQLite 自动生成（运行时创建）
-├── config.yaml                     # 本地配置文件（不入库，见 .gitignore；api_key 可用环境变量 PLUMEBOT_API_KEY 覆盖）
+├── config.yaml                     # 本地配置文件（不入库，见 .gitignore；模型 api_key 可用环境变量 PLUMEBOT_APIKEY_<模型名大写> 覆盖，self_id 可用 PLUMEBOT_SELFID 覆盖）
+├── docker-compose.yml              # NapCat 启动（入库；ACCOUNT 优先取 PLUMEBOT_SELFID、WEBUI_TOKEN 经 .env 插值，.env 不入库）
+├── .env.example                    # .env 模板（入库）
 ├── docs/
 │   ├── architecture.md             # 架构设计文档
 │   ├── roadmap.md                  # 任务台账（阶段表 + 遗留事项 B 台账）
@@ -273,15 +283,15 @@ domain 零依赖
 ### 5.6 已确立的架构决策
 
 - **中间件链在 service/event**：ZeroBot 无中间件机制（只有 Rule/Matcher/Engine.midHandler），业务管线属编排层，放 service 可单测。
-- **发送能力在 infra/onebot**：ZeroBot 的 `ctx` 只在连接层可见（无 CtxFromEvent，`zero.GetBot` 拿到的 Ctx 的 Event 为 nil，只能用于 SendGroupMessage/SendPrivateMessage/CallAction）。限流/敏感词命中由 matcher 内 `ctx.Send` 固定文案回复（`rateLimitedReply`/`sensitiveWordReply` 常量）。Agent 回复采用**方案 B：Sender 注入 ctx**——matcher 闭包构造 per-event 的 `domain.Sender`（持有 `*zero.Ctx`）经 `domain.WithSender` 注入，Handler 链签名保持 `(ctx,msg) error`，需回复的环节 `domain.SenderFrom(ctx).Send(entity.Reply)` 直接发送，载荷结构化（多模态 + 引用回复 + @，见 roadmap B-003）。`domain.Sender` 不含动作能力（禁言/踢人等经 `domain.GroupManager` 供 agent tool 调用，见 B-015）；非响应式主动发送（异步插件、定时、P5 auto 后续发言）需显式目标，届时另定义 `SendTo` 形态并 main 注入。
+- **发送能力在 infra/onebot**：ZeroBot 的 `ctx` 只在连接层可见（无 CtxFromEvent，`zero.GetBot` 拿到的 Ctx 的 Event 为 nil，只能用于 SendGroupMessage/SendPrivateMessage/CallAction）。限流/敏感词命中由 matcher 内 `ctx.Send` 固定文案回复（`rateLimitedReply`/`sensitiveWordReply` 常量）。Agent 回复采用**方案 B：Sender 注入 ctx**——matcher 闭包构造 per-event 的 `domain.Sender`（持有 `*zero.Ctx`）经 `domain.WithSender` 注入，Handler 链签名保持 `(ctx,msg) error`，需回复的环节 `domain.SenderFrom(ctx).Send(entity.Reply)` 直接发送，载荷结构化（多模态 + 引用回复 + @，见架构 §9.2/§10.2 与 roadmap P6-002 行）。`domain.Sender` 不含动作能力（禁言/踢人等经 `domain.GroupManager` 供 agent tool 调用，见 B-015）；非响应式主动发送（异步插件、定时、P5 auto 后续发言）需显式目标，届时另定义 `SendTo` 形态并 main 注入。
 - **连接层无事件级 context**：onebot 适配层传 `context.Background()`；service Handler 已预留 ctx 参数（B-007，未来仅改 onebot 一处）。
 - **LLM provider 注册中心为注入式实例**（P2-004）：`ai.Registry` 经 main 组装注入，非包级全局单例；`Factory func(ctx, config.Config) (domain.Agent, error)` 接收**完整 Config**（LLM 段 + Tools 段在工厂内组装）；工具表经 `NewOpenAIFactory(tr *ToolsRegistry)` 闭包注入（Factory 签名固定）。
 - **Agent 实现细节**（P2-004，`internal/infra/ai`）：`EinoAgent` 封装 eino v0.8.13 的 `adk.ChatModelAgent` —— `Instruction` 通常为空（P6-001 起人格由 service 组装注入 system 消息，见下条）、`Name`/`Description` 填 adk 元数据（为将来多 agent `NewAgentTool` 做准备）、`MaxIterations=20`（tool 循环上限）、仅当启用工具时才注入 `ToolsConfig`。工具挂在注入式 `ToolsRegistry` 上（无全局状态），`Register` 拒绝重复名。
 - **人格=DB 人格模板、人格选择 agent，P6-001 起由 service 组装注入 system 消息，不进 infra/agent 层**（P2-004 方案 A' + P4-001 定案 → P6-001 修订，原 Instruction 注入因「改库需重启」不能满足运行时生效而废弃）：persona 表（agent 绑定字段 + name + system_prompt，无 userid/groupid/extend，见架构 §7）按 `cfg.Agent.Name` 由 `service/memory BuildMessages` 每次组装现查（`GetPersonaByAgent`）注入首条 system 消息，**改 persona 表即时生效**；main 侧 `cfg.Agent.SystemPrompt` 置空使 `Instruction` 为空、provider 工厂不再兜底 `DefaultSystemPrompt`；兜底链：模板 `system_prompt` → `config.agent.system_prompt`（`defaultPersona`，main 传入组装器）→ `DefaultSystemPrompt`。不在 agent 配置中写人格 id（配置只有 agent.name）。
 - **agent 三要素配置化，多 agent 平滑演进**（P2-004）：`agent.name/description`（空值兜底 `config.DefaultAgentName/DefaultAgentDescription`）；`system_prompt` 空值时由组装器兜底 `defaultPersona`（`config.agent.system_prompt`）→ `DefaultSystemPrompt`（见上条）；`agent.name` 是 adk 元数据标识（multi-agent 路由），与 `bot.name`（QQ 展示名）语义独立不耦合；未来多 agent 演进为 `agents.list[]` + `active` 选择（每项一份三要素，LLM 保持全局 provider 注册中心），本期不实现。
 - **模板不替代 memory**（P2-004 评审）：eino ChatTemplate/StateModifier **不引入**（service 层不能 import infra 类型；组装逻辑不进 infra）；memory 存结构化数据不做渲染（同一数据源多渲染目标）；prompt 组装在 service 层（P6-001 完整五段），摘要压缩 prompt 归 service/memory（P3-003）。
-- **窗口/状态按会话分锁，跨会话互不阻塞**（P6-001 审查定案）：`Window`（service/memory）与 `ControlService`（service/control）对**同一会话**的读-改写以 per-session 锁串行化（`sync.Map` 注册表 + 每会话 `sync.Mutex`），**不同群/私聊互不阻塞**、跨会话天然并行（持锁绝不含 LLM/IO）。注意此锁**不覆盖** `GetWindow` 浅拷贝逃逸出的 Parts 数组——同会话 BuildMessages 与窗口压缩的数组读写约束见 roadmap B-040（P6-002 接线时落实）。
-- **插件形态 = 子进程 stdio，.so 废弃，go-plugin 定案**（P4-002 前置定案）：Go `plugin` 包（`-buildmode=plugin` / `plugin.Open()`）仅支持 Linux/FreeBSD/macOS——Windows 开发机不可用、禁交叉编译；且无卸载 API（非真热，只能热添加）、与主程序同进程（panic 拖垮整个 bot）、插件需与主程序完全同版本编译。插件统一为**独立进程 + stdio 通信**（HashiCorp go-plugin，net/rpc 变体，免 protoc）：跨平台、进程隔离、真热重载（重启子进程）。插件遵循**指令集协议**（§8.6）——`entity.PluginRequest{Command, Args, Session}` → `entity.PluginResult{Reply, Actions}`，插件零权限只声明意图、宿主唯一执行者；`domain.Plugin` 签名为 `Execute(ctx, entity.PluginRequest) (entity.PluginResult, error)`。**P4-002 只定义协议 + 宿主校验，不执行**：回复发送归 P6-002（B-003 Sender），群管理动作执行归 B-015（GroupManager + 护栏）。
+- **窗口/状态按会话分锁，跨会话互不阻塞**（P6-001 审查定案）：`Window`（service/memory）与 `ControlService`（service/control）对**同一会话**的读-改写以 per-session 锁串行化（`sync.Map` 注册表 + 每会话 `sync.Mutex`），**不同群/私聊互不阻塞**、跨会话天然并行（持锁绝不含 LLM/IO）。**同会话组装/压缩并发竞态已由 B-040 定案解决**（P6-002）：`GetWindow` 深拷贝 Parts（组装/压缩各持独立快照，无逃逸数组竞态）+ `Window.BackfillParts` 在窗口锁内安全回填图片描述——无跨 LLM 持锁（同会话组装与压缩互不阻塞）、常规路径零冗余落库（跳过条件 `Description!=""` 靠回填喂，见 roadmap P6-002）。
+- **插件形态 = 子进程 stdio，.so 废弃，go-plugin 定案**（P4-002 前置定案）：Go `plugin` 包（`-buildmode=plugin` / `plugin.Open()`）仅支持 Linux/FreeBSD/macOS——Windows 开发机不可用、禁交叉编译；且无卸载 API（非真热，只能热添加）、与主程序同进程（panic 拖垮整个 bot）、插件需与主程序完全同版本编译。插件统一为**独立进程 + stdio 通信**（HashiCorp go-plugin，net/rpc 变体，免 protoc）：跨平台、进程隔离、真热重载（重启子进程）。插件遵循**指令集协议**（§8.6）——`entity.PluginRequest{Command, Args, Session}` → `entity.PluginResult{Reply, Actions}`，插件零权限只声明意图、宿主唯一执行者；`domain.Plugin` 签名为 `Execute(ctx, entity.PluginRequest) (entity.PluginResult, error)`。**回复执行已由 P6-002 落地**（校验通过后经 B-003 Sender 发送 `Reply`）；群管理动作执行仍归 B-015（GroupManager + 护栏）。
 
 ## 6. 模块说明
 
@@ -319,7 +329,7 @@ domain 零依赖
 - 限流：`golang.org/x/time/rate` 令牌桶，按群（私聊按用户）独立，超时返回 `ErrRateLimited`；
 - 敏感词：`pkg/ahocorasick` 匹配，空词表 = 不过滤；
 - 日志中间件记录 message_id/group_id/user_id/message_type/content，日志不重复（infra/onebot 不再打消息 Info）；
-- 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录，不发送，见架构 §10.2）；最后对普通消息做 P5-001/002 触发判断 + 状态规则（control service：mention/auto 模式 + 精力/冷却/连续/时段/短消息，触发即 OnReplied 更新运行态，只标记不发送，发送归 P6-002 B-003）。
+- 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录；校验通过且含 `Reply` 时经 ctx 内 domain.Sender 发送，B-017，见架构 §10.2）；最后对普通消息走 P6-002 回复闭环 respond（P5-001/002 触发判断 + 状态规则命中 → BuildMessages 拼 prompt → Agent GenerateReply（记忆工具经 ctx Session 写入）→ 经 domain.Sender 发送 → 发送成功才窗口追加 bot 回复 + OnReplied 记账，B-038，见架构 §14.4）。
 
 ### 6.4 internal/handler/
 
@@ -355,8 +365,8 @@ domain 零依赖
 - 配置文件加载与解析；
 - `//go:embed config.default.yaml` 嵌入默认模板：`Load()` 时配置文件不存在则写入模板再加载；
 - **空值兜底由消费方负责**（如限流 rate≤0→2、burst≤0→20、max_wait≤0→10s；WsURL 空→`ws://127.0.0.1:3001`；Bot.Name 空→`PlumeBot`）；config 层不改写字段；
-- **唯一例外：`chat_model` 条目的 `api_key`** 支持环境变量 `PLUMEBOT_API_KEY` 覆盖（非空时优先于文件值，敏感密钥不入配置文件；`vision_model` 条目密钥由文件提供）；
-- 新增配置字段必须**双处同步**：`pkg/config/config.default.yaml` + 根 `config.yaml`（config.go 注释已标明）。根 `config.yaml` 已被 `.gitignore`（本地文件，含用户真实密钥，不入库）；守卫测试 `TestRootConfigYAMLSyncedWithDefault` 比较时排除 `api_key` 字段。
+- **仅敏感/机器相关字段支持环境变量覆盖**（非通用 env 读取）：每个模型条目的 `api_key` 支持 `PLUMEBOT_APIKEY_<模型名大写>` 覆盖（如 `PLUMEBOT_APIKEY_CHAT`，非空时优先于文件值，敏感密钥不入配置文件；`name` 空的条目不参与）；`bot.self_id` 支持 `PLUMEBOT_SELFID` 覆盖（与 NapCat 登录 QQ 号一致时，docker-compose 的 ACCOUNT 可与 self_id 共用同一来源）；
+- 新增配置字段必须**双处同步**：`pkg/config/config.default.yaml` + 根 `config.yaml`（config.go 注释已标明）。根 `config.yaml` 已被 `.gitignore`（本地文件，含用户真实密钥，不入库）；配置双处同步靠人工维护，不再有守卫测试强制（原 `TestRootConfigYAMLSyncedWithDefault` 已移除）。
 
 ## 7. 代码规则
 
