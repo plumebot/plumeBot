@@ -1,6 +1,6 @@
 # PlumeBot
 
-基于 OneBot 协议的 QQ 机器人，对接 NapCat，AI 驱动的赛博群友。
+基于 OneBot-11 协议的 QQ 机器人，对接 NapCat，轻量化，采用三级记忆压缩，更友好的多模态处理，简洁的插件配置以及双模式对话（mention|auto）。
 
 ## 技术栈
 
@@ -61,7 +61,3 @@ plumebot/
 - [架构设计文档](docs/architecture.md)
 - [开发阶段规划](docs/roadmap.md)
 - [开发执行规范](CLAUDE.md)
-
-## 当前阶段
-
-第六阶段：联调验收（P6-001 Prompt 组装已完结，P6-002 完整消息链路已完结，P6-003 稳定性验证待实现）。详见 [CLAUDE.md](CLAUDE.md) 和 [roadmap](docs/roadmap.md)。
