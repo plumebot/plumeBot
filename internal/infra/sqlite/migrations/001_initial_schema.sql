@@ -2,8 +2,8 @@
 -- Migration: 001_initial_schema
 -- 描述:      PlumeBot 数据库全部表结构（单文件；conversation_summary 与
 --           group_jargon.status 已并入，原 002/003 迁移文件删除；
---           group_config 为 P5-001 新增）：
---           共 9 张表 + 4 个索引。
+--           group_config 为 P5-001 新增；plugin_config 已移除）：
+--           共 8 张表 + 4 个索引。
 -- 创建时间:  2026-07（002/003 于 P3-005 合并；group_config 于 P5-001 追加）
 -- =============================================================================
 
@@ -97,18 +97,7 @@ CREATE TABLE IF NOT EXISTS bot_state (
 );
 
 -- -----------------------------------------------------------------------------
--- 7. plugin_config — 插件配置
--- 作用:   按 (group_id, plugin_name) 唯一，存储某插件在某群的配置。
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS plugin_config (
-    group_id    TEXT NOT NULL,                   -- 群 ID
-    plugin_name TEXT NOT NULL,                   -- 插件名称
-    config      TEXT NOT NULL DEFAULT '{}',      -- 配置 JSON
-    PRIMARY KEY (group_id, plugin_name)
-);
-
--- -----------------------------------------------------------------------------
--- 8. conversation_summary — 摘要归档（1 会话 N 条）
+-- 7. conversation_summary — 摘要归档（1 会话 N 条）
 -- 作用:   存储被淘汰/被融合覆盖的窗口摘要（长程记忆，P3-003）。
 -- 约束:   (chat_id, seq) 唯一 —— seq 为会话内递增序号，upsert 幂等，
 --         回灌的旧摘要再次被覆盖时重复落库不产生冗余。
@@ -129,7 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_conversation_summary_chat
     ON conversation_summary(chat_id, seq);
 
 -- -----------------------------------------------------------------------------
--- 9. group_config — 群静态配置（P5-001 mode 起；P5-002 状态规则参数覆盖）
+-- 8. group_config — 群静态配置（P5-001 mode 起；P5-002 状态规则参数覆盖）
 -- 作用:   每群一条，存 per-group 静态配置。与 bot_state（运行态 JSON）职责分离；
 --         未配置列（0 或空串）= 走全局 cfg.Control 兜底（mode 空走 cfg.Control.Mode，
 --         参数列 0/空 走 cfg.Control.state）。

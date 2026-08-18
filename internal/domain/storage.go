@@ -6,7 +6,7 @@ import (
 	"plumebot/internal/domain/entity"
 )
 
-// Storage 持久化接口，覆盖全部 9 张业务表。
+// Storage 持久化接口，覆盖全部 8 张业务表。
 type Storage interface {
 	// ── messages ──
 	SaveMessage(ctx context.Context, msg entity.Message) error
@@ -50,12 +50,6 @@ type Storage interface {
 	// ── bot_state ──
 	UpsertBotState(ctx context.Context, state entity.BotState) error
 	GetBotState(ctx context.Context, groupID string) (*entity.BotState, error)
-
-	// ── plugin_config ──
-	UpsertPluginConfig(ctx context.Context, config entity.PluginConfig) error
-	GetPluginConfig(ctx context.Context, groupID, pluginName string) (*entity.PluginConfig, error)
-	ListPluginConfigs(ctx context.Context, groupID string) ([]entity.PluginConfig, error)
-	DeletePluginConfig(ctx context.Context, groupID, pluginName string) error
 
 	// ── group_config ──
 	UpsertGroupConfig(ctx context.Context, cfg entity.GroupConfig) error

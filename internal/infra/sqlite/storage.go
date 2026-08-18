@@ -384,53 +384,6 @@ func (s *Storage) GetBotState(ctx context.Context, groupID string) (*entity.BotS
 	return &st, nil
 }
 
-// ──────────────────────────── plugin_config ────────────────────────────
-
-// UpsertPluginConfig 插入或更新插件的群配置（(group_id, plugin_name) 冲突时覆盖）。
-func (s *Storage) UpsertPluginConfig(ctx context.Context, cfg entity.PluginConfig) error {
-	_, err := s.db.ExecContext(ctx, sqlUpsertPluginConfig, cfg.GroupID, cfg.PluginName, cfg.Config)
-	return err
-}
-
-// GetPluginConfig 按群和插件名查询配置。不存在时返回 domain.ErrNotFound。
-func (s *Storage) GetPluginConfig(ctx context.Context, groupID, pluginName string) (*entity.PluginConfig, error) {
-	row := s.db.QueryRowContext(ctx, sqlGetPluginConfig, groupID, pluginName)
-
-	var cfg entity.PluginConfig
-	if err := row.Scan(&cfg.GroupID, &cfg.PluginName, &cfg.Config); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
-		}
-		return nil, err
-	}
-	return &cfg, nil
-}
-
-// ListPluginConfigs 列出指定群内全部插件配置。
-func (s *Storage) ListPluginConfigs(ctx context.Context, groupID string) ([]entity.PluginConfig, error) {
-	rows, err := s.db.QueryContext(ctx, sqlListPluginConfigs, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []entity.PluginConfig
-	for rows.Next() {
-		var cfg entity.PluginConfig
-		if err := rows.Scan(&cfg.GroupID, &cfg.PluginName, &cfg.Config); err != nil {
-			return nil, err
-		}
-		out = append(out, cfg)
-	}
-	return out, rows.Err()
-}
-
-// DeletePluginConfig 删除指定群中指定插件的配置。
-func (s *Storage) DeletePluginConfig(ctx context.Context, groupID, pluginName string) error {
-	_, err := s.db.ExecContext(ctx, sqlDeletePluginConfig, groupID, pluginName)
-	return err
-}
-
 // ──────────────────────────── group_config ────────────────────────────
 
 // UpsertGroupConfig 插入或更新群的静态配置（group_id 冲突时覆盖）。

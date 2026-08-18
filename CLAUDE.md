@@ -194,7 +194,7 @@ plumebot/
 │   └── infra/                      # 基础设施，实现 domain 接口
 │       ├── onebot/                 #   ZeroBot 封装（已接入：matcher 分发 + 固定文案回复 + Sender 实现 B-003）
 │       ├── ai/                     #   eino Agent + 摘要器实现（P2-004 provider 注册中心 + 多模态转换 + tool 机制；P3-003 Summarizer 裸模型单次调用；P3-004 tools/ 记忆更新工具）
-│       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，9 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）
+│       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，8 张表 + migrations；member_profile/plugin_config 已移除，persona 为 agent 绑定人格模板）
 │       │   └── migrations/        #     DDL 迁移文件（001 单文件，migrate 全量执行）
 ├── plugin-sdk/                     #   独立 SDK module（P6-004）：entity 协议 wire 类型 + plugin go-plugin 接线（宿主 replace 本地）
 ├── pkg/                            # 可复用工具
@@ -349,7 +349,7 @@ domain 零依赖
 现状：
 
 - `onebot/`：已接入（matcher 注册 + 事件转换 + 固定文案回复）；已实现、有单测。
-- `sqlite/`：已接入（P2-001，9 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）。
+- `sqlite/`：已接入（P2-001，8 张表 + migrations；member_profile/plugin_config 已移除，persona 为 agent 绑定人格模板）。
 - `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿；P3-004：`ai/tools` 记忆更新工具 store_fact/learn_jargon/forget_fact，会话身份经 `entity.Session` 注入 ctx）。
 - `plugin-sdk/`（根目录，独立 module，P6-004）：插件协议 wire 类型（`plugin-sdk/entity`）+ go-plugin net/rpc 接线（`plugin-sdk/plugin`：插件侧 `Serve` + 宿主侧 `NewClient`，宿主侧 `Client` 结构化满足 `domain.Plugin`）。宿主 `internal/domain/entity` 协议类型为 SDK 类型别名；第三方插件只依赖 SDK。
 

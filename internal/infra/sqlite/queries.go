@@ -63,15 +63,6 @@ const (
 
 	sqlGetBotState = `SELECT group_id, state FROM bot_state WHERE group_id = ?`
 
-	// ── plugin_config ──
-
-	sqlUpsertPluginConfig = `INSERT INTO plugin_config (group_id, plugin_name, config) VALUES (?, ?, ?)
- ON CONFLICT(group_id, plugin_name) DO UPDATE SET config=excluded.config`
-
-	sqlGetPluginConfig    = `SELECT group_id, plugin_name, config FROM plugin_config WHERE group_id = ? AND plugin_name = ?`
-	sqlListPluginConfigs  = `SELECT group_id, plugin_name, config FROM plugin_config WHERE group_id = ?`
-	sqlDeletePluginConfig = `DELETE FROM plugin_config WHERE group_id = ? AND plugin_name = ?`
-
 	// ── group_config ──
 
 	sqlUpsertGroupConfig = `INSERT INTO group_config (group_id, mode, energy_max, energy_cost, energy_recover,

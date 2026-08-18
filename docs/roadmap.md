@@ -40,7 +40,7 @@
 
 | 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 | 状态 |
 |---|---------|------|:---:|------|------|------|:--:|
-| P2-001 | SQLite 存储层 | 实现 domain.Storage 接口：建表（8 张表：messages、group_profile、group_jargon、member_profile、member_facts、persona、bot_state、plugin_config）、CRUD；启动时自动建表 + 插入默认人格 | P0 | infra/sqlite | P1 全部完成 | 可写入/查询 messages；默认人格 groupid=0 自动插入 | ✅ |
+| P2-001 | SQLite 存储层 | 实现 domain.Storage 接口：建表（8 张表：messages、group_profile、group_jargon、member_profile、member_facts、persona、bot_state、plugin_config）、CRUD；启动时自动建表 + 插入默认人格（注：plugin_config 已移除——插件配置不落库，由插件自持） | P0 | infra/sqlite | P1 全部完成 | 可写入/查询 messages；默认人格 groupid=0 自动插入 | ✅ |
 | P2-002 | ZeroBot 连接层 | 实现 OneBot WebSocket 客户端，连接 NapCat，接收原始事件 → 转为 domain.Event → 交给 handler | P0 | infra/onebot | P1 全部完成 | bot 启动后连上 NapCat，能收到群消息事件并打印日志 | ✅ |
 | P2-003 | 消息管线中间件 | 实现中间件链（日志 → 限流 → 敏感词过滤），在 event service 中编织 | P0 | service/event | P2-002 完成 | 每条消息有日志输出；限流超限丢弃；敏感词命中拦截且记录 | ✅ |
 | P2-004 | eino Agent 接入 | 实现 domain.Agent 接口，封装 eino ChatModelAgent，支持 tool calling | P0 | infra/ai | P1 全部完成 | 传入简单 prompt 可收到 LLM 文本回复 | ✅ |
@@ -145,7 +145,6 @@
 | B-016 | 后置 | Agent 动态人格演化暂缓 | P4-001 设计决策 | 有需要时 | 人格为 DB 人格模板、人格选择 agent（persona.agent 绑定，见架构 §7），无 update_persona tool / 无运行时演化；如需 per-group 人设或 Agent 在对话中自主调整人格，届时再加工具与维度 |
 | B-018 | 后置 | 插件热重载 | P4-002 范围外 | 有需要时 | plugin.json / 插件 exe 变更（mtime）→ 自动重启该插件进程（go-plugin 原生支持重启，mtime 轮询零新依赖） |
 | B-019 | 后置 | 插件崩溃自动重启 + 超时策略细化 | P4-002 范围外 | 有需要时 | go-plugin 已能检测进程退出；崩溃自动重启与单次调用超时策略（当前 `infra/plugin_exe` 固定 5s）细化后置 |
-| B-020 | 后置 | `plugin_config` 表使用 + 插件自持状态 | P4-002 范围外 | 有需要时 | 按群插件配置（§11 `plugin_config` 表）与插件自持状态读写，当前 `plugin.json` 仅承载命令表元数据 |
 | B-021 | P6 | 引用回复（reply 段）解析 | 多模态修复阶段 1 裁剪 | P6 有需要时 | 入站 `reply` 段当前**不解析**，兜底转文本占位「未知内容」（face 转表情 id 文本；forward/json/xml/music 等同为文本占位，见 infra/onebot convert.go）。引用回复是强上下文信号：支持需解析引用 `message_id`，从窗口 / SQLite 找回原文并入上下文。P6 级能力，未排期 |
 | B-022 | 后置 | `data/image_cache/` 文件只增不清 | 阶段 2 base64 入链闭合 + 设计评审 E7 | 有需要时 | `internal/infra/imagecache` 按内容 md5 去重落盘（同图幂等），但无引用计数/淘汰，长期运行会累积缓存文件；届时按体积/时间做清理策略。另：`Save` 的 `Stat+WriteFile` 有 TOCTOU，改 `O_CREATE|O_EXCL` 原子去重（随本项处理） |
 | B-033 | P6 | `GetMessages` 私聊维度 | 设计评审 S3 | P6 | 接口加 user_id，私聊按用户区分（当前 `group_id=""` 会混） |
