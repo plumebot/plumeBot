@@ -3,7 +3,7 @@ package entity
 import (
 	"context"
 
-	sdkentity "github.com/plumebot/plugin-sdk/entity"
+	sdkentity "github.com/plumebot/plumebot-sdk/plugin"
 )
 
 // Session 是一次 Agent 推理/插件调用的会话身份：当前群 + 当前说话人。

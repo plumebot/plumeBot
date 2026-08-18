@@ -1,6 +1,6 @@
 package entity
 
-import sdkentity "github.com/plumebot/plugin-sdk/entity"
+import sdkentity "github.com/plumebot/plumebot-sdk/plugin"
 
 // PluginRequest 是宿主 → 插件的一次命令调用载荷（插件协议，见架构 §8.6）。
 // 协议类型单一事实来源已迁至 plugin-sdk/entity（方案 A：方便第三方独立编写插件，

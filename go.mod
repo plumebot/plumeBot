@@ -2,11 +2,9 @@ module plumebot
 
 go 1.26.4
 
-// 插件 SDK：独立 module（协议 wire 类型 + go-plugin 接线，见 plugin-sdk/），本地 replace。
+// 插件 SDK：独立 module（协议 wire 类型 + go-plugin 接线，见 plumebot-sdk/），本地 replace。
 // 发布后去掉 replace 改为远程依赖。
-require github.com/plumebot/plugin-sdk v0.0.0
-
-replace github.com/plumebot/plugin-sdk => ./plugin-sdk
+require github.com/plumebot/plumebot-sdk v0.1.0
 
 require (
 	github.com/cloudwego/eino v0.8.13
@@ -26,7 +24,7 @@ require (
 	github.com/RomiChan/syncx v0.0.0-20240418144900-b7402ffdebc7 // indirect
 	github.com/RomiChan/websocket v1.4.3-0.20251002072000-d3eb41798438 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/buger/jsonparser v1.1.1 // indirect
+	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
@@ -75,12 +73,12 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/arch v0.11.0 // indirect
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
-	golang.org/x/net v0.38.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20231106174013-bbf56f31fb17 // indirect
-	google.golang.org/grpc v1.61.0 // indirect
-	google.golang.org/protobuf v1.36.6 // indirect
+	golang.org/x/text v0.39.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/grpc v1.82.1 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

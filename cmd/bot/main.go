@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strconv"
 
-	sdkplugin "github.com/plumebot/plugin-sdk/plugin"
+	sdkplugin "github.com/plumebot/plumebot-sdk/plugin"
 
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
