@@ -126,7 +126,7 @@ func TestToMessageMentioned(t *testing.T) {
 	}
 }
 
-// TestToParts 校验段数组 → Parts 映射（text/at/image/record/video/file + 丢弃段）。
+// TestToParts 校验段数组 → Parts 映射（text/at/image/record/video/file + 未知段兜底转文本）。
 func TestToParts(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -178,13 +178,17 @@ func TestToParts(t *testing.T) {
 			want:  []entity.ContentPart{{Type: entity.PartTypeImage, URL: ""}},
 		},
 		{
-			name: "丢弃回复与表情段",
+			name: "回复/表情段兜底转文本",
 			in: message.Message{
 				message.Text("正文"),
 				message.Reply(999),
 				message.Face(178),
 			},
-			want: []entity.ContentPart{{Type: entity.PartTypeText, Text: "正文"}},
+			want: []entity.ContentPart{
+				{Type: entity.PartTypeText, Text: "正文"},
+				{Type: entity.PartTypeText, Text: "未知内容"}, // reply 段走 default 兜底
+				{Type: entity.PartTypeText, Text: "178"},  // face 段转表情 id 文本
+			},
 		},
 	}
 	for _, tc := range cases {

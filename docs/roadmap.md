@@ -107,6 +107,7 @@
 | P6-001 | Prompt 组装联调 | 确认人格（persona 模板）→ 会话画像（群画像 + 窗口内成员事实 member_facts 各 N 条）→ 压缩摘要 → 窗口 → 当前消息的 prompt 顺序正确。落地能力：注入上限（`llm.prompt` config：每成员事实条数/黑话条数/描述预算）、图片描述写回（`Storage.UpdateMessageParts`）、`Message.ForLLM()` 文本视图（压缩共用）、describer 缓存 + 失败冷却、at→text 组装转文本；persona 并入组装（BuildMessages 现查 persona 表，改库即时生效，取代 Instruction 注入）；事件管线接线归 P6-002 | P0 | service/memory + infra/ai + infra/sqlite + pkg/config + entity | P3-003、P4-001 | 生成 prompt 格式符合架构文档第 6 节 | ✅ |
 | P6-002 | 完整消息链路 | 端到端：收到群消息 → 中间件 → 触发判断 → 拼 prompt → Agent 推理 → 回复（agent service 收 `Generate` 返回值经 ctx 内 `domain.Sender` 直接发送，机制见 B-003）→ 记忆更新 → 窗口追加。落地：B-003（`domain.Sender` + matcher 注入 + onebot `replyToChain` 转 `message.ReplyWithMessage`/`At`，`ctx.SendChain`）、B-017（插件回复经 Sender 执行，群动作仍归 B-015）、B-038（OnReplied 移至发送成功）、B-040（`GetWindow` 深拷贝 + `BackfillParts` 安全回填，无跨 LLM 阻塞、常规路径零冗余落库）、bot 回复合成 `self:` MessageID（规避空串冲突）、Agent 回复群聊被 @ 时仅 @ 触发者（不引用，避免引用预览带出 @bot） | P0 | 全部 | 前五阶段全部完成 | bot 在群聊中被 @ 能正常回复；记忆正常更新；摘要正常生成 | ✅ |
 | P6-003 | 稳定性验证 | 连续运行数小时，检查内存泄漏、goroutine 泄漏、SQLite 文件增长、API 调用频率 | P1 | 全部 | P6-002 完成 | 内存不持续增长；goroutine 不泄漏；API 调用不超过限制 |  |
+| P6-004 | 插件 SDK 抽取（方案 A） | 把插件协议 wire 类型与 go-plugin 接线抽为独立 module `github.com/plumebot/plugin-sdk`（`plugin-sdk/entity` 协议类型 + `plugin-sdk/plugin` `Serve`/`NewClient`，宿主 `replace` 本地）；宿主 `internal/domain/entity` 协议类型改类型别名 + `ValidatePluginResult` 转发；删除 `internal/infra/plugin_exe`；`cmd/bot` 直接用 SDK `NewClient`；示例插件改为只依赖 SDK（第三方可独立编写插件，不 import 宿主 internal） | P1 | plugin-sdk + domain/entity + cmd/bot + plugins/example | P4-002 完成 | 宿主 build/vet 通过；plugin-sdk entity/plugin 单测全绿（含 go-plugin 子进程往返）；示例插件经 SDK 编译并往返可用 | ✅ |
 
 ---
 
@@ -145,7 +146,7 @@
 | B-018 | 后置 | 插件热重载 | P4-002 范围外 | 有需要时 | plugin.json / 插件 exe 变更（mtime）→ 自动重启该插件进程（go-plugin 原生支持重启，mtime 轮询零新依赖） |
 | B-019 | 后置 | 插件崩溃自动重启 + 超时策略细化 | P4-002 范围外 | 有需要时 | go-plugin 已能检测进程退出；崩溃自动重启与单次调用超时策略（当前 `infra/plugin_exe` 固定 5s）细化后置 |
 | B-020 | 后置 | `plugin_config` 表使用 + 插件自持状态 | P4-002 范围外 | 有需要时 | 按群插件配置（§11 `plugin_config` 表）与插件自持状态读写，当前 `plugin.json` 仅承载命令表元数据 |
-| B-021 | P6 | 引用回复（reply 段）解析 | 多模态修复阶段 1 裁剪 | P6 有需要时 | 入站 `reply` 段当前被丢弃（face/forward/json/xml/music 同为永久简化，但 reply 不同）。引用回复是强上下文信号：支持需解析引用 `message_id`，从窗口 / SQLite 找回原文并入上下文。P6 级能力，未排期 |
+| B-021 | P6 | 引用回复（reply 段）解析 | 多模态修复阶段 1 裁剪 | P6 有需要时 | 入站 `reply` 段当前**不解析**，兜底转文本占位「未知内容」（face 转表情 id 文本；forward/json/xml/music 等同为文本占位，见 infra/onebot convert.go）。引用回复是强上下文信号：支持需解析引用 `message_id`，从窗口 / SQLite 找回原文并入上下文。P6 级能力，未排期 |
 | B-022 | 后置 | `data/image_cache/` 文件只增不清 | 阶段 2 base64 入链闭合 + 设计评审 E7 | 有需要时 | `internal/infra/imagecache` 按内容 md5 去重落盘（同图幂等），但无引用计数/淘汰，长期运行会累积缓存文件；届时按体积/时间做清理策略。另：`Save` 的 `Stat+WriteFile` 有 TOCTOU，改 `O_CREATE|O_EXCL` 原子去重（随本项处理） |
 | B-033 | P6 | `GetMessages` 私聊维度 | 设计评审 S3 | P6 | 接口加 user_id，私聊按用户区分（当前 `group_id=""` 会混） |
 | B-034 | 后置 | 版本化迁移 | 设计评审 S1 + P5-002 审查 | 生产前 | `schema_migrations` 版本化，替代全量重跑 001（解决加列不生效）。**P5-002 触发案例**：group_config 扩 10 列时原地改 001，对已存在的旧库（P5-001 时代 2 列）升级会静默失效（migrate 只 `CREATE TABLE IF NOT EXISTS` 不加列，12 列 SELECT 报错 → auto 模式对所有非 @ 群消息静默）。开发期 data/ 为空无影响；生产前必须版本化，并新增独立迁移文件用 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 补列 |
@@ -154,6 +155,7 @@
 | B-039 | P6 | P5-002 已知边界 | P5-002 审查 L2/L3/L4 | P6 有需要时 | ①纯图片/媒体消息 auto 模式永不触发（`PlainText()` 空 → short_message 短路，多模态启用后需豁免非 text 段）；②静默时段按服务器本地时区（群成员时区不同时窗口偏移）；③per-group 只配 `quiet_hours_start` 且等于全局 end 时静默被禁用（start==end 空段语义，建议配置侧 warn） |
 | B-041 | P6 | 空 MessageID 根修（OneBot message_id=0） | P6-001 审查 BUG-2/6 | P6 有需要时 | 入站 `message_id=0` 时 `formatID` 返回 `""`，导致：SQLite `message_id=''` 行被多消息共享（描述写回错位）、窗口内多副本。P6-001 已在组装层防御（空 ID 不持久化描述 + 按位置去重）；根修在 onebot convert 对空 ID 合成唯一 ID（如时间+内容哈希），消除 `''` 行共享与窗口多副本 |
 | B-042 | 持续 | 配置环境变量覆盖为「敏感/机器字段专用」 | config 重构（环境变量扩展） | 密钥迁移 / 新增环境变量时 | 原 `PLUMEBOT_API_KEY`（单点覆盖 chat_model api_key）已废弃，改为按模型条目独立：`PLUMEBOT_APIKEY_<模型名大写>`（如 name=chat → `PLUMEBOT_APIKEY_CHAT`；name 空条目不参与）；另 `bot.self_id` 支持 `PLUMEBOT_SELFID` 覆盖（与 docker-compose ACCOUNT 共用同一来源）。非通用 env 读取（无 AutomaticEnv/BindEnv）。密钥迁移时删除旧 `PLUMEBOT_API_KEY`，旧变量不再生效；环境变量/注释变更需双处同步（config.default.yaml + 根 config.yaml + CLAUDE.md §6.6） |
+| B-043 | 后置 | 插件 SDK 发布为远程 module | P6-004（SDK 抽取） | 对外发布时 | `github.com/plumebot/plugin-sdk` 当前为仓库内子 module（宿主 `replace` 本地）；对外发布后去掉 replace 改远程依赖，第三方 `go get github.com/plumebot/plugin-sdk` 即可独立编写插件 |
 
 ---
 

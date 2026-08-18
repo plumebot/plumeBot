@@ -233,14 +233,16 @@ P6-001 起：`service/memory BuildMessages` 每次组装按 `cfg.Agent.Name` 现
 |------|------|:---:|
 | 子进程 stdio | 插件为独立进程，主程序经 stdio 通信；跨平台、进程隔离、真热重载（重启子进程） | 主方案 |
 
-> 实现选型（P4-002 定案）：**HashiCorp go-plugin，net/rpc 变体**——握手/版本协商/崩溃检测/热重载齐全，
-> 纯 Go 无 cgo、免 protoc 代码生成（stdlib net/rpc + gob 序列化结构化结果）；插件为 Go（同 module 内编译）。
+> 实现选型（P4-002 定案，P6-004 更新）：**HashiCorp go-plugin，net/rpc 变体**——握手/版本协商/崩溃检测/热重载齐全，
+> 纯 Go 无 cgo、免 protoc 代码生成（stdlib net/rpc + gob 序列化结构化结果）。**插件协议与接线抽为独立
+> SDK module `github.com/plumebot/plugin-sdk`（P6-004，方案 A）**：`plugin-sdk/entity`（协议 wire 类型）+ `plugin-sdk/plugin`
+> （`Serve`/`NewClient` 接线）；宿主与第三方插件共用，第三方无需 import 宿主 internal。
 > gRPC 变体留作将来支持非 Go 语言插件的升级路径。
 
 ### 8.2 子进程 stdio 通信
 
 - 传输：stdio（非网络），主进程 ↔ 插件子进程
-- 格式：go-plugin 协议（net/rpc + gob）；插件 = 同 module 内 `plugins/<name>/main.go` 编译出的独立 exe
+- 格式：go-plugin 协议（net/rpc + gob）；插件 = 依赖 `plugin-sdk` 编译出的独立 exe（仅需 plugin-sdk，不 import 宿主 internal）
 - 热重载：插件代码变更 → 重启该插件子进程，bot 本体不动、无需重编译主程序
 - 隔离：插件崩溃不影响主进程；宿主经 go-plugin 检测进程退出（自动重启属 B 类遗留）
 
@@ -274,8 +276,10 @@ P6-001 起：`service/memory BuildMessages` 每次组装按 `cfg.Agent.Name` 现
   插件零权限只声明意图，宿主唯一执行者。**回复执行已落地**：校验通过的 `Reply` 由 event 命令分支经
   B-003 `domain.Sender` 发送（P6-002，文本/图片/引用/@，见 §10.2）；群管理动作 `Actions` 仍**不执行**
   ——归 B-015（GroupManager + per-group 开关 + 管理员校验）。
-- **协议类型落点**：`internal/domain/entity`（业务实体，单一事实来源）；`infra/plugin_exe` 内含
-  go-plugin 的 RPC 接线（宿主/插件共用，import domain/entity）。插件与宿主同 module 编译，gob 类型天然一致。
+- **协议类型落点（P6-004 更新）**：`plugin-sdk/entity`（协议 wire 类型，单一事实来源）；`plugin-sdk/plugin` 内含
+  go-plugin 的 RPC 接线（宿主/插件共用）。宿主 `internal/domain/entity` 对协议类型做**类型别名**
+  （`type X = sdkentity.X`）+ `ValidatePluginResult` 转发，宿主业务代码继续经 entity 引用，
+  gob 类型名与插件侧一致（同一 SDK module 路径，宿主 `replace` 本地）。
 
 ---
 
@@ -457,7 +461,7 @@ internal/
     onebot/                         #   ZeroBot 封装
     ai/                             #   eino Agent 实现
     sqlite/                         #   SQLite 存储实现
-    plugin_exe/                     #   子进程插件 SDK（go-plugin net/rpc，宿主与插件共用）
+plugin-sdk/                        #   独立 SDK module（P6-004）：entity 协议 wire 类型 + plugin go-plugin 接线（宿主 replace 本地）
 pkg/                                # 可复用工具
 plugins/                            # 插件目录（运行时，插件子进程可执行文件）
 data/                               # SQLite 自动生成

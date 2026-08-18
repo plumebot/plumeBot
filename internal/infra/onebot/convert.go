@@ -41,7 +41,9 @@ func toMessage(ev *zero.Event, cache *imagecache.Cache) (entity.Message, bool) {
 //   - image → image（优先 url 字段；无 url 且为 base64:// 段时解码落盘 data/image_cache/<md5>、
 //     以本地路径闭合 URL，使 base64 图片可被描述；解码/落盘失败或 cache 为 nil → 留空占位）；
 //   - record/video/file → 对应类型（url 为空则留空占位）；
-//   - face/reply/forward/json/xml/music 等 → 丢弃（低价值，不污染纯文本视图）。
+//   - face → text（表情 id 文本，保留进纯文本视图）；
+//   - 其余未知段（reply/forward/json/xml/music 等）→ text 占位「未知内容」（不静默丢弃，
+//     保证纯文本视图不丢内容；引用回复解析等留待后续，见 roadmap B-021）。
 func toParts(ev message.Message, cache *imagecache.Cache) []entity.ContentPart {
 	parts := make([]entity.ContentPart, 0, len(ev))
 	for _, seg := range ev {

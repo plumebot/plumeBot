@@ -24,7 +24,7 @@ go build ./...
 # 静态分析
 go vet ./...
 
-# 测试（已有多包单测：service/event、service/memory、service/agent、service/control、service/plugin、infra/onebot、infra/ai、infra/ai/tools、infra/plugin_exe、infra/imagecache、infra/sqlite、pkg/config、pkg/ahocorasick、pkg/base64util）
+# 测试（已有多包单测：service/event、service/memory、service/agent、service/control、service/plugin、infra/onebot、infra/ai、infra/ai/tools、infra/imagecache、infra/sqlite、pkg/config、pkg/ahocorasick、pkg/base64util、plugin-sdk（独立 module：entity + plugin））
 go test ./...
 
 # 运行（连接 NapCat，需先配置 config.yaml 的 onebot.ws_url；缺失配置会自动写入默认模板）
@@ -102,8 +102,9 @@ persona 重构为 agent 绑定人格模板，见架构 §7）。
 经 Instruction 注入；默认 agent 无模板则 seed 一条默认模板固化当前生效人设；组装在 main 侧，infra/ai 零改动，
 见架构 §7。注：Instruction 注入已由 P6-001 修订为 service 组装注入 system 消息，见 §5.6）。
 已完成：P4-002 插件系统（go-plugin 子进程 + 指令集协议：entity.PluginRequest/PluginResult{Reply, Actions}，
-internal/infra/plugin_exe 做 go-plugin net/rpc 接线（手写 shim，免 protoc），host 侧 service/plugin 发现路由（plugin.json）+ 命令分发分支；
+plugin-sdk（独立 module，P6-004 抽取）做 go-plugin net/rpc 接线（手写 shim，免 protoc），host 侧 service/plugin 发现路由（plugin.json）+ 命令分发分支；
 只定义协议 + 宿主校验（ValidatePluginResult），不执行回复/动作，见架构 §8.6 与 B-017；回复发送已由 P6-002 落地（B-017），群管理动作仍归 B-015）。
+已完成：P6-004 插件 SDK 抽取（协议 wire 类型 + go-plugin 接线迁至 plugin-sdk/entity + plugin-sdk/plugin，宿主 internal/domain/entity 协议类型改类型别名 + ValidatePluginResult 转发，删除 infra/plugin_exe；cmd/bot 直接用 SDK NewClient；示例插件只依赖 SDK，第三方可独立编写插件）。
 已完成：第四阶段（人格与插件）全部完结，进入第六阶段。
 已完成：P5-001 触发模式（mention/auto 双模式，per-group group_config 表可独立配置；
 domain.Control 两方法 ShouldReply→Decision + OnReplied；service/control 模式判定 + event tail
@@ -195,7 +196,7 @@ plumebot/
 │       ├── ai/                     #   eino Agent + 摘要器实现（P2-004 provider 注册中心 + 多模态转换 + tool 机制；P3-003 Summarizer 裸模型单次调用；P3-004 tools/ 记忆更新工具）
 │       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，9 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）
 │       │   └── migrations/        #     DDL 迁移文件（001 单文件，migrate 全量执行）
-│       └── plugin_exe/             #   子进程插件 SDK（go-plugin net/rpc：插件侧 Serve + 宿主侧客户端）
+├── plugin-sdk/                     #   独立 SDK module（P6-004）：entity 协议 wire 类型 + plugin go-plugin 接线（宿主 replace 本地）
 ├── pkg/                            # 可复用工具
 │   ├── config/                     #   配置加载（嵌入默认模板 config.default.yaml）
 │   ├── logger/                     #   全局 zap 日志
@@ -291,7 +292,7 @@ domain 零依赖
 - **agent 三要素配置化，多 agent 平滑演进**（P2-004）：`agent.name/description`（空值兜底 `config.DefaultAgentName/DefaultAgentDescription`）；`system_prompt` 空值时由组装器兜底 `defaultPersona`（`config.agent.system_prompt`）→ `DefaultSystemPrompt`（见上条）；`agent.name` 是 adk 元数据标识（multi-agent 路由），与 `bot.name`（QQ 展示名）语义独立不耦合；未来多 agent 演进为 `agents.list[]` + `active` 选择（每项一份三要素，LLM 保持全局 provider 注册中心），本期不实现。
 - **模板不替代 memory**（P2-004 评审）：eino ChatTemplate/StateModifier **不引入**（service 层不能 import infra 类型；组装逻辑不进 infra）；memory 存结构化数据不做渲染（同一数据源多渲染目标）；prompt 组装在 service 层（P6-001 完整五段），摘要压缩 prompt 归 service/memory（P3-003）。
 - **窗口/状态按会话分锁，跨会话互不阻塞**（P6-001 审查定案）：`Window`（service/memory）与 `ControlService`（service/control）对**同一会话**的读-改写以 per-session 锁串行化（`sync.Map` 注册表 + 每会话 `sync.Mutex`），**不同群/私聊互不阻塞**、跨会话天然并行（持锁绝不含 LLM/IO）。**同会话组装/压缩并发竞态已由 B-040 定案解决**（P6-002）：`GetWindow` 深拷贝 Parts（组装/压缩各持独立快照，无逃逸数组竞态）+ `Window.BackfillParts` 在窗口锁内安全回填图片描述——无跨 LLM 持锁（同会话组装与压缩互不阻塞）、常规路径零冗余落库（跳过条件 `Description!=""` 靠回填喂，见 roadmap P6-002）。
-- **插件形态 = 子进程 stdio，.so 废弃，go-plugin 定案**（P4-002 前置定案）：Go `plugin` 包（`-buildmode=plugin` / `plugin.Open()`）仅支持 Linux/FreeBSD/macOS——Windows 开发机不可用、禁交叉编译；且无卸载 API（非真热，只能热添加）、与主程序同进程（panic 拖垮整个 bot）、插件需与主程序完全同版本编译。插件统一为**独立进程 + stdio 通信**（HashiCorp go-plugin，net/rpc 变体，免 protoc）：跨平台、进程隔离、真热重载（重启子进程）。插件遵循**指令集协议**（§8.6）——`entity.PluginRequest{Command, Args, Session}` → `entity.PluginResult{Reply, Actions}`，插件零权限只声明意图、宿主唯一执行者；`domain.Plugin` 签名为 `Execute(ctx, entity.PluginRequest) (entity.PluginResult, error)`。**回复执行已由 P6-002 落地**（校验通过后经 B-003 Sender 发送 `Reply`）；群管理动作执行仍归 B-015（GroupManager + 护栏）。
+- **插件形态 = 子进程 stdio，.so 废弃，go-plugin 定案**（P4-002 前置定案）：Go `plugin` 包（`-buildmode=plugin` / `plugin.Open()`）仅支持 Linux/FreeBSD/macOS——Windows 开发机不可用、禁交叉编译；且无卸载 API（非真热，只能热添加）、与主程序同进程（panic 拖垮整个 bot）、插件需与主程序完全同版本编译。插件统一为**独立进程 + stdio 通信**（HashiCorp go-plugin，net/rpc 变体，免 protoc）：跨平台、进程隔离、真热重载（重启子进程）。插件遵循**指令集协议**（§8.6）——`entity.PluginRequest{Command, Args, Session}` → `entity.PluginResult{Reply, Actions}`，插件零权限只声明意图、宿主唯一执行者；`domain.Plugin` 签名为 `Execute(ctx, entity.PluginRequest) (entity.PluginResult, error)`。**回复执行已由 P6-002 落地**（校验通过后经 B-003 Sender 发送 `Reply`）；群管理动作执行仍归 B-015（GroupManager + 护栏）。**协议与接线抽为独立 SDK module（P6-004）**：`plugin-sdk/entity`（wire 类型）+ `plugin-sdk/plugin`（`Serve`/`NewClient`），宿主 `internal/domain/entity` 协议类型改类型别名、`ValidatePluginResult` 转发，`cmd/bot` 直接用 SDK `NewClient`；第三方插件只依赖 plugin-sdk 即可独立编写（不 import 宿主 internal），gob 类型名因同 module 路径保持一致。
 
 ## 6. 模块说明
 
@@ -350,7 +351,7 @@ domain 零依赖
 - `onebot/`：已接入（matcher 注册 + 事件转换 + 固定文案回复）；已实现、有单测。
 - `sqlite/`：已接入（P2-001，9 张表 + migrations；member_profile 已移除，persona 为 agent 绑定人格模板）。
 - `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿；P3-004：`ai/tools` 记忆更新工具 store_fact/learn_jargon/forget_fact，会话身份经 `entity.Session` 注入 ctx）。
-- `plugin_exe/`：子进程插件 SDK，P4-002 已实现（go-plugin net/rpc：插件侧 `Serve` + 宿主侧 `NewClient`，宿主侧唯一 `domain.Plugin` 实现为 `Client`）。
+- `plugin-sdk/`（根目录，独立 module，P6-004）：插件协议 wire 类型（`plugin-sdk/entity`）+ go-plugin net/rpc 接线（`plugin-sdk/plugin`：插件侧 `Serve` + 宿主侧 `NewClient`，宿主侧 `Client` 结构化满足 `domain.Plugin`）。宿主 `internal/domain/entity` 协议类型为 SDK 类型别名；第三方插件只依赖 SDK。
 
 每个 infra 包必须：
 

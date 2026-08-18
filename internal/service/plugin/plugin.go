@@ -19,7 +19,7 @@ type PluginClient interface {
 	Close()
 }
 
-// ClientFactory 由 main 注入，绑定具体实现（infra/plugin_exe），避免 service import infra。
+// ClientFactory 由 main 注入，绑定具体实现（plugin-sdk 的 NewClient），避免 service import SDK。
 type ClientFactory func(exePath string) (PluginClient, error)
 
 // metadata 对应 plugins/<name>/plugin.json（架构 §8.4 插件发现）。

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strconv"
 
+	sdkplugin "github.com/plumebot/plugin-sdk/plugin"
+
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler"
@@ -13,7 +15,6 @@ import (
 	"plumebot/internal/infra/ai/tools"
 	"plumebot/internal/infra/imagecache"
 	"plumebot/internal/infra/onebot"
-	"plumebot/internal/infra/plugin_exe"
 	"plumebot/internal/infra/sqlite"
 	"plumebot/internal/service/agent"
 	"plumebot/internal/service/control"
@@ -129,9 +130,10 @@ func main() {
 			logger.S("vision_model", cfg.LLM.VisionModel))
 	}
 	// P4-002 插件系统：go-plugin 子进程（stdio）。service/plugin 经注入的工厂拉起插件进程，
-	// 避免 service 直接依赖 infra。协议见架构 §8.6：只定义协议 + 宿主校验，不执行回复/动作。
+	// 避免 service 直接依赖 SDK；接线来自 plugin-sdk（方案 A：宿主与插件共用独立 SDK module）。
+	// 协议见架构 §8.6：宿主只校验指令集，不执行动作（回复发送见 P6-002）。
 	pluginSvc := plugin.NewPluginService(func(exePath string) (plugin.PluginClient, error) {
-		return plugin_exe.NewClient(exePath)
+		return sdkplugin.NewClient(exePath)
 	})
 	if err := pluginSvc.Discover("./plugins"); err != nil {
 		logger.Fatal("插件发现失败", logger.Err(err))

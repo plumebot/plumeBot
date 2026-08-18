@@ -1,4 +1,4 @@
-package plugin_exe
+package plugin
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"plumebot/internal/domain/entity"
+	"github.com/plumebot/plugin-sdk/entity"
 )
 
 // echoImpl 是测试插件实现：回显命令名。

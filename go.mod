@@ -2,10 +2,15 @@ module plumebot
 
 go 1.26.4
 
+// 插件 SDK：独立 module（协议 wire 类型 + go-plugin 接线，见 plugin-sdk/），本地 replace。
+// 发布后去掉 replace 改为远程依赖。
+require github.com/plumebot/plugin-sdk v0.0.0
+
+replace github.com/plumebot/plugin-sdk => ./plugin-sdk
+
 require (
 	github.com/cloudwego/eino v0.8.13
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
-	github.com/hashicorp/go-plugin v1.8.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/viper v1.21.0
 	github.com/tidwall/gjson v1.18.0
@@ -38,6 +43,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
+	github.com/hashicorp/go-plugin v1.8.0 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect

@@ -1,14 +1,17 @@
 package entity
 
-import "context"
+import (
+	"context"
 
-// Session 是一次 Agent 推理的会话身份：当前群 + 当前说话人。
+	sdkentity "github.com/plumebot/plugin-sdk/entity"
+)
+
+// Session 是一次 Agent 推理/插件调用的会话身份：当前群 + 当前说话人。
+// 协议单一事实来源已迁至 plugin-sdk/entity（插件协议 PluginRequest 复用同一类型，
+// 见架构 §8.6），此处为类型别名。
 // 记忆工具（store_fact/learn_jargon/forget_fact，P3-004）经 ctx 读取它确定记忆归属；
-// 由消息管线（P6-002）在调用 Agent 前注入。entity 包零依赖，仅标准库。
-type Session struct {
-	GroupID string // 群 ID（私聊时为空）
-	UserID  string // 当前说话人 QQ 号
-}
+// 由消息管线（P6-002）在调用 Agent 前注入。
+type Session = sdkentity.Session
 
 // sessionCtxKey 是 Session 在 context 中的键类型（私有类型，避免与其他包键冲突）。
 type sessionCtxKey struct{}
