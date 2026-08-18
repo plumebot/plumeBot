@@ -149,6 +149,7 @@ func buildModelFromEntry(ctx context.Context, e config.LLMModelConfig, timeoutSe
 		Timeout:             time.Duration(timeout) * time.Second,
 		Temperature:         temperature,
 		MaxCompletionTokens: maxTokens,
+		ReasoningEffort:     openai.ReasoningEffortLevelLow,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("构造 openai ChatModel 失败: %w", err)

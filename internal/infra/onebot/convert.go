@@ -71,8 +71,10 @@ func toParts(ev message.Message, cache *imagecache.Cache) []entity.ContentPart {
 			parts = append(parts, entity.ContentPart{Type: entity.PartTypeVideo, URL: seg.Data["url"]})
 		case "file":
 			parts = append(parts, entity.ContentPart{Type: entity.PartTypeFile, URL: seg.Data["url"]})
+		case "face":
+			parts = append(parts, entity.ContentPart{Type: entity.PartTypeText, Text: seg.Data["id"]})
 		default:
-			// face/reply/forward/json/xml/music 等：不落内容。
+			parts = append(parts, entity.ContentPart{Type: entity.PartTypeText, Text: "未知内容"})
 		}
 	}
 	return parts
