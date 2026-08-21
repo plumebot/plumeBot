@@ -5,6 +5,7 @@ package onebot
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	log "github.com/sirupsen/logrus"
 	zero "github.com/wdvxdr1123/ZeroBot"
@@ -23,18 +24,23 @@ type Client struct {
 	cache  *imagecache.Cache // base64:// 图片入链闭合；nil = 关闭
 	msg    *handler.MessageHandler
 	notice *handler.NoticeHandler
+	store  domain.Storage // B-015：群管理 per-group 开关查询（botGroupManager 用）
+	botID  int64          // B-015：bot 自身 QQ 号（管理员校验；0 = 未配置，fail-closed）
 }
 
 // New 创建 Client，注入消息/通知事件处理入口。
 // logLevel 用于对齐 ZeroBot 内部 logrus 日志级别（debug|info|warn|error）。
 // cache 用于 base64:// 图片入链闭合（可为 nil 关闭）。
+// store/botID 供 B-015 群管理执行器使用：store 查 per-group 开关，botID 为 bot 自身
+// QQ 号（cfg.Bot.SelfID，空/非法 → 0，管理员校验 fail-closed）。
 // 空值兜底由本包负责：ws_url 为空时使用默认 NapCat 地址。
-func New(cfg config.OnebotConfig, logLevel string, msg *handler.MessageHandler, notice *handler.NoticeHandler, cache *imagecache.Cache) *Client {
+func New(cfg config.OnebotConfig, logLevel string, msg *handler.MessageHandler, notice *handler.NoticeHandler, cache *imagecache.Cache, store domain.Storage, botID string) *Client {
 	if cfg.WsURL == "" {
 		cfg.WsURL = config.DefaultWsURL
 	}
 	log.SetLevel(parseLogLevel(logLevel))
-	return &Client{cfg: cfg, cache: cache, msg: msg, notice: notice}
+	selfID, _ := strconv.ParseInt(botID, 10, 64) // 空/非法 → 0：管理员校验 fail-closed
+	return &Client{cfg: cfg, cache: cache, msg: msg, notice: notice, store: store, botID: selfID}
 }
 
 // Run 注册事件分发并启动连接。ZeroBot 底层自动处理断线重连，本方法阻塞运行，不返回。
@@ -67,8 +73,11 @@ func (c *Client) registerMatchers() {
 		}
 		// B-003：matcher 闭包构造 per-event 的 domain.Sender（持有 *zero.Ctx）经 WithSender 注入 ctx；
 		// 需回复的环节（agent 回复、插件回复）经 SenderFrom(ctx).Send 直接发送，Handler 链签名不变。
+		// B-015：同构注入 per-event 的 domain.GroupManager（群管理动作，工具层/插件 Actions 共用
+		// 执行路径），护栏（per-group 开关 + 管理员校验）在其 Execute 内集中把关。
 		// 消息日志统一由 service/event 日志中间件记录，这里不重复打 Info。
 		sendCtx := domain.WithSender(context.Background(), newSender(ctx))
+		sendCtx = domain.WithGroupManager(sendCtx, newGroupManager(ctx, c.store, c.botID))
 		if err := c.msg.Handle(sendCtx, msg); err != nil {
 			if reply := decideReply(err); reply != "" {
 				// ctx.Send 自动回事件来源（群回群、私聊回私聊），发送失败由 ZeroBot 内部记录。

@@ -18,4 +18,9 @@ type GroupConfig struct {
 	QuietHoursStart   string `json:"quiet_hours_start"`   // 深夜静默起 "HH:MM"
 	QuietHoursEnd     string `json:"quiet_hours_end"`     // 深夜静默止 "HH:MM"
 	ShortMessageChars int    `json:"short_message_chars"` // 短消息忽略阈值（<N 字不触发）
+
+	// ── B-015 群管理开关（per-group 单一开关，默认开）──
+	// 与上面「0 = 走全局兜底」语义不同：此为显式开关，0=关 1=开（默认）；
+	// 无配置行（ErrNotFound）同样视为开，botGroupManager.Execute 放行（需管理员校验）。
+	GroupMgmtEnabled int `json:"group_mgmt_enabled"`
 }

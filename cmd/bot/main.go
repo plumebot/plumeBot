@@ -68,6 +68,22 @@ func main() {
 	if err := toolsRegistry.Register("forget_fact", memTools.ForgetFact()); err != nil {
 		logger.Fatal("注册 forget_fact 失败", logger.Err(err))
 	}
+	// B-015 群管理动作工具：能力经 ctx 注入的 GroupManager 执行（per-event），
+	// 工具自身无依赖；护栏（per-group 开关 + 管理员校验）在 onebot 实现内集中把关，
+	// per-group 开关 group_config.group_mgmt_enabled 默认 1 开（0 = 显式关闭）。
+	gmTools := tools.NewGroupTools()
+	if err := toolsRegistry.Register("group_mute", gmTools.GroupMute()); err != nil {
+		logger.Fatal("注册 group_mute 失败", logger.Err(err))
+	}
+	if err := toolsRegistry.Register("group_unmute", gmTools.GroupUnmute()); err != nil {
+		logger.Fatal("注册 group_unmute 失败", logger.Err(err))
+	}
+	if err := toolsRegistry.Register("group_kick", gmTools.GroupKick()); err != nil {
+		logger.Fatal("注册 group_kick 失败", logger.Err(err))
+	}
+	if err := toolsRegistry.Register("group_set_card", gmTools.GroupSetCard()); err != nil {
+		logger.Fatal("注册 group_set_card 失败", logger.Err(err))
+	}
 
 	// P4-001 人格模板 + P6-001 运行时生效：
 	// persona 模板按 cfg.Agent.Name 由 service/memory BuildMessages 每次组装现查注入 system 消息
@@ -165,7 +181,7 @@ func main() {
 	noticeHandler := handler.NewNoticeHandler(eventSvc)
 
 	// 5. 启动 onebot 连接（阻塞，ZeroBot 底层自动重连）
-	client := onebot.New(cfg.Onebot, cfg.Log.Level, msgHandler, noticeHandler, imgCache)
+	client := onebot.New(cfg.Onebot, cfg.Log.Level, msgHandler, noticeHandler, imgCache, storageInfra, cfg.Bot.SelfID)
 	if cfg.Bot.Name == "" {
 		cfg.Bot.Name = config.DefaultBotName // 展示用兜底
 	}

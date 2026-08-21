@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"plumebot/internal/domain"
@@ -29,7 +30,8 @@ func parseCommand(content string) (cmd string, args []string, ok bool) {
 
 // dispatchCommand 是命令分支（架构 §10.2「是命令? → 插件分发」）：以 / 开头的消息
 // 路由到插件执行，校验通过后记录指令集摘要；插件回复经 ctx 内 Sender 发送（B-017，
-// 文本/图片/引用/@，Reply.Segments/Quote/At）；群管理动作（Actions）仅记录不执行（B-015）。
+// 文本/图片/引用/@，Reply.Segments/Quote/At）；群管理动作（Actions）经 ctx 内
+// GroupManager 执行（B-015，与 AI 工具共用执行路径，护栏在 Execute 内把关）。
 // 返回 handled：true = 命令消息已分发（调用方短路，不再走触发判断）；
 // false = 非命令消息（调用方继续触发判断）。
 func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) (bool, error) {
@@ -63,6 +65,15 @@ func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) 
 				logger.Warn("插件回复发送失败", logger.S("command", cmd), logger.Err(err))
 			}
 		}
+		// B-015：校验通过后执行群管理动作（Actions）——与 AI 工具共用 domain.GroupManager
+		// 执行路径。先发回复后执行动作（用户能立刻看到插件反馈）；失败仅告警（命令分支
+		// 吞错误语义维持现状）；护栏（per-group 开关 + 管理员校验）在 Execute 内统一把关，
+		// 此处不重复。
+		if len(res.Actions) > 0 {
+			if err := s.executeActions(ctx, res.Actions); err != nil {
+				logger.Warn("插件群管理动作执行失败", logger.S("command", cmd), logger.Err(err))
+			}
+		}
 	case errors.Is(err, domain.ErrNotFound):
 		logger.Debug("未找到插件命令", logger.S("command", cmd), logger.S("group_id", msg.GroupID))
 	default:
@@ -88,6 +99,21 @@ func (s *EventService) handleHelpCommand(ctx context.Context, msg entity.Message
 		logger.Warn("help 回复发送失败", logger.Err(err))
 	}
 	return true
+}
+
+// executeActions 依次执行插件声明的群管理动作；失败即停（返回首个错误）。
+// 护栏（per-group 开关 + 管理员校验）在 domain.GroupManager 实现内把关。
+func (s *EventService) executeActions(ctx context.Context, actions []entity.GroupAction) error {
+	gm, ok := domain.GroupManagerFrom(ctx)
+	if !ok {
+		return errors.New("缺少群管理执行能力（GroupManager 未注入）")
+	}
+	for _, a := range actions {
+		if err := gm.Execute(ctx, a); err != nil {
+			return fmt.Errorf("动作 %s(%s) 执行失败: %w", a.Op, a.Target, err)
+		}
+	}
+	return nil
 }
 
 // replySegmentSummary 汇总回复段类型，如 "text,image"。

@@ -2,7 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"plumebot/internal/domain"
@@ -230,12 +233,13 @@ func TestGroupConfigRoundTrip(t *testing.T) {
 		t.Fatalf("未配置群应返回 ErrNotFound, 实际: %v", err)
 	}
 
-	// Upsert → Get 往返（mode + 10 个状态规则参数全覆盖）。
+	// Upsert → Get 往返（mode + 10 个状态规则参数全覆盖 + B-015 群管理开关）。
 	full := entity.GroupConfig{
 		GroupID: "g1", Mode: "auto",
 		EnergyMax: 100, EnergyCost: 10, EnergyRecover: 5, EnergyThreshold: 20,
 		CooldownSeconds: 60, ConsecutiveLimit: 5, RestSeconds: 300,
 		QuietHoursStart: "23:00", QuietHoursEnd: "07:00", ShortMessageChars: 4,
+		GroupMgmtEnabled: 1,
 	}
 	if err := s.UpsertGroupConfig(ctx, full); err != nil {
 		t.Fatalf("UpsertGroupConfig 失败: %v", err)
@@ -253,8 +257,8 @@ func TestGroupConfigRoundTrip(t *testing.T) {
 		t.Fatalf("UpsertGroupConfig 覆盖失败: %v", err)
 	}
 	got, _ = s.GetGroupConfig(ctx, "g1")
-	if got.Mode != "mention" || got.EnergyMax != 0 || got.QuietHoursStart != "" {
-		t.Errorf("覆盖后应仅 mode=mention、参数列归 0, 实际 %+v", got)
+	if got.Mode != "mention" || got.EnergyMax != 0 || got.QuietHoursStart != "" || got.GroupMgmtEnabled != 0 {
+		t.Errorf("覆盖后应仅 mode=mention、参数列归 0、开关归 0, 实际 %+v", got)
 	}
 
 	// 群间隔离。
@@ -265,4 +269,115 @@ func TestGroupConfigRoundTrip(t *testing.T) {
 	if got.Mode != "mention" {
 		t.Errorf("g1 配置不应被 g2 影响, 实际 %+v", got)
 	}
+}
+
+// TestMigrateFreshDB 新库：schema_migrations 记录 001/002 两个版本，group_config 含
+// B-015 开关列并可 roundtrip。
+func TestMigrateFreshDB(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("打开测试数据库失败: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	versions, err := s.appliedMigrations(ctx)
+	if err != nil {
+		t.Fatalf("读取已执行迁移失败: %v", err)
+	}
+	if !versions["001_initial_schema.sql"] || !versions["002_group_mgmt.sql"] {
+		t.Errorf("新库应记录 001/002 两个迁移版本, 实际 %v", versions)
+	}
+
+	cfg := entity.GroupConfig{GroupID: "g1", Mode: "auto", GroupMgmtEnabled: 1}
+	if err := s.UpsertGroupConfig(ctx, cfg); err != nil {
+		t.Fatalf("UpsertGroupConfig(开关开) 失败: %v", err)
+	}
+	got, err := s.GetGroupConfig(ctx, "g1")
+	if err != nil {
+		t.Fatalf("GetGroupConfig 失败: %v", err)
+	}
+	if got.GroupMgmtEnabled != 1 {
+		t.Errorf("开关列 roundtrip 失败, 实际 %+v", got)
+	}
+}
+
+// TestMigrateUpgradeOldDB 模拟 B-015 之前的旧库（001 建表、无 schema_migrations）：
+// Open 后应自动升级——group_config 加列成功、schema_migrations 补齐 001/002。
+func TestMigrateUpgradeOldDB(t *testing.T) {
+	dir := t.TempDir()
+	// 用 001 DDL 手工建旧库（不含 schema_migrations 与 group_mgmt_enabled 列）。
+	b, err := schemaFS.ReadFile("migrations/001_initial_schema.sql")
+	if err != nil {
+		t.Fatalf("读取 001 迁移失败: %v", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "plumebot.db"))
+	if err != nil {
+		t.Fatalf("打开旧库失败: %v", err)
+	}
+	for _, stmt := range strings.Split(string(b), ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("执行旧库 DDL 失败: %v\n%s", err, stmt)
+		}
+	}
+	db.Close()
+
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open 旧库升级失败（不应报 duplicate column）: %v", err)
+	}
+	defer s.Close()
+
+	rows, err := s.db.Query(`PRAGMA table_info(group_config)`)
+	if err != nil {
+		t.Fatalf("查询表结构失败: %v", err)
+	}
+	defer rows.Close()
+	hasColumn := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString // dflt_value 可为 NULL（无默认值的列）
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("扫描列信息失败: %v", err)
+		}
+		if name == "group_mgmt_enabled" {
+			hasColumn = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("遍历列信息失败: %v", err)
+	}
+	if !hasColumn {
+		t.Error("旧库升级后 group_config 应含 group_mgmt_enabled 列")
+	}
+	versions, err := s.appliedMigrations(context.Background())
+	if err != nil {
+		t.Fatalf("读取已执行迁移失败: %v", err)
+	}
+	if !versions["001_initial_schema.sql"] || !versions["002_group_mgmt.sql"] {
+		t.Errorf("旧库升级后应记录 001/002, 实际 %v", versions)
+	}
+}
+
+// TestMigrateRestartIdempotent 重启幂等：同目录 Open→Close→Open 不报
+// duplicate column（版本记录机制保证 002 只执行一次）。
+func TestMigrateRestartIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("第一次 Open 失败: %v", err)
+	}
+	s.Close()
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatalf("第二次 Open 失败（迁移不应重复执行）: %v", err)
+	}
+	s.Close()
 }

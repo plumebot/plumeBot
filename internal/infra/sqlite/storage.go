@@ -65,7 +65,17 @@ func (s *Storage) Close() error {
 
 // ──────────────────────────── migration ────────────────────────────
 
-// migrate 执行嵌入的全部迁移文件 DDL（按文件名序拼接后逐条执行）。
+// sqlCreateSchemaMigrations 建迁移版本记录表（B-015 起 migrate 升级为版本记录式：
+// 每个迁移文件在单事务内执行一次并记录，旧库 001 重放靠 IF NOT EXISTS 幂等，
+// 新增列类迁移（ALTER TABLE）不再与全量重放冲突）。
+const sqlCreateSchemaMigrations = `CREATE TABLE IF NOT EXISTS schema_migrations (
+    version    TEXT PRIMARY KEY,                       -- 迁移文件名，如 "001_initial_schema.sql"
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`
+
+// migrate 执行未记录的迁移文件（文件名序）。每个文件在单事务内逐语句执行：
+// 任一语句失败整体回滚、不记录版本，下次启动重试（避免「ALTER 成功但未记录
+// → 重启 duplicate column」）；成功则写入 schema_migrations。
 func (s *Storage) migrate(ctx context.Context) error {
 	names, err := fs.Glob(schemaFS, "migrations/*.sql")
 	if err != nil {
@@ -73,25 +83,67 @@ func (s *Storage) migrate(ctx context.Context) error {
 	}
 	sort.Strings(names)
 
-	var sb strings.Builder
+	if _, err := s.db.ExecContext(ctx, sqlCreateSchemaMigrations); err != nil {
+		return fmt.Errorf("创建 schema_migrations 失败: %w", err)
+	}
+	applied, err := s.appliedMigrations(ctx)
+	if err != nil {
+		return err
+	}
+
 	for _, name := range names {
+		version := filepath.Base(name)
+		if applied[version] {
+			continue
+		}
 		b, err := schemaFS.ReadFile(name)
 		if err != nil {
 			return fmt.Errorf("读取迁移文件 %s 失败: %w", name, err)
 		}
+		var sb strings.Builder
 		sb.Write(b)
 		sb.WriteString(";")
-	}
-	for _, stmt := range strings.Split(sb.String(), ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("开启迁移事务 %s 失败: %w", version, err)
 		}
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("执行 DDL 失败: %w\n%s", err, stmt)
+		for _, stmt := range strings.Split(sb.String(), ";") {
+			stmt = strings.TrimSpace(stmt)
+			if stmt == "" {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("执行迁移 %s 失败: %w\n%s", version, err, stmt)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES (?)`, version); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("记录迁移 %s 失败: %w", version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("提交迁移 %s 失败: %w", version, err)
 		}
 	}
 	return nil
+}
+
+// appliedMigrations 读取 schema_migrations 中已执行的迁移文件名集合。
+func (s *Storage) appliedMigrations(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("读取已执行迁移失败: %w", err)
+	}
+	defer rows.Close()
+	applied := make(map[string]bool)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("扫描已执行迁移失败: %w", err)
+		}
+		applied[v] = true
+	}
+	return applied, rows.Err()
 }
 
 // ──────────────────────────── messages ────────────────────────────
@@ -391,18 +443,19 @@ func (s *Storage) UpsertGroupConfig(ctx context.Context, cfg entity.GroupConfig)
 	_, err := s.db.ExecContext(ctx, sqlUpsertGroupConfig,
 		cfg.GroupID, cfg.Mode, cfg.EnergyMax, cfg.EnergyCost, cfg.EnergyRecover,
 		cfg.EnergyThreshold, cfg.CooldownSeconds, cfg.ConsecutiveLimit, cfg.RestSeconds,
-		cfg.QuietHoursStart, cfg.QuietHoursEnd, cfg.ShortMessageChars)
+		cfg.QuietHoursStart, cfg.QuietHoursEnd, cfg.ShortMessageChars, cfg.GroupMgmtEnabled)
 	return err
 }
 
-// GetGroupConfig 按群 ID 查询静态配置。不存在时返回 domain.ErrNotFound。
+// GetGroupConfig 按群 ID 查询静态配置。不存在时返回 domain.ErrNotFound
+//（群管理开关语义：无配置行 = 默认关，见 entity.GroupConfig.GroupMgmtEnabled 注释）。
 func (s *Storage) GetGroupConfig(ctx context.Context, groupID string) (*entity.GroupConfig, error) {
 	row := s.db.QueryRowContext(ctx, sqlGetGroupConfig, groupID)
 
 	var c entity.GroupConfig
 	if err := row.Scan(&c.GroupID, &c.Mode, &c.EnergyMax, &c.EnergyCost, &c.EnergyRecover,
 		&c.EnergyThreshold, &c.CooldownSeconds, &c.ConsecutiveLimit, &c.RestSeconds,
-		&c.QuietHoursStart, &c.QuietHoursEnd, &c.ShortMessageChars); err != nil {
+		&c.QuietHoursStart, &c.QuietHoursEnd, &c.ShortMessageChars, &c.GroupMgmtEnabled); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, domain.ErrNotFound
 		}

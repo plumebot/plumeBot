@@ -272,10 +272,11 @@ P6-001 起：`service/memory BuildMessages` 每次组装按 `cfg.Agent.Name` 现
     与 `at`（`""` / `"sender"` / 具体 user_id）；
   - `Actions`：附加动作，强类型枚举 `GroupOp`（`mute` / `unmute` / `kick` / `set_card`），
     对齐 B-015 `domain.GroupManager` 能力集。
-- **执行范围（P4-002 定案，P6-002 更新）**：协议完整定义 + 宿主校验（`Validate()` 校验枚举/必填字段）。
+- **执行范围（P4-002 定案，P6-002/B-015 更新）**：协议完整定义 + 宿主校验（`Validate()` 校验枚举/必填字段）。
   插件零权限只声明意图，宿主唯一执行者。**回复执行已落地**：校验通过的 `Reply` 由 event 命令分支经
-  B-003 `domain.Sender` 发送（P6-002，文本/图片/引用/@，见 §10.2）；群管理动作 `Actions` 仍**不执行**
-  ——归 B-015（GroupManager + per-group 开关 + 管理员校验）。
+  B-003 `domain.Sender` 发送（P6-002，文本/图片/引用/@，见 §10.2）；**群管理动作 `Actions` 已执行**
+  （B-015）：dispatchCommand → executeActions 经 ctx 内 `domain.GroupManager` 执行，与 AI 工具共用
+  同一执行路径与护栏链（per-group 开关 + 管理员校验 + 时长钳制，见 §15）。
 - **协议类型落点（P6-004 更新）**：`plugin-sdk/entity`（协议 wire 类型，单一事实来源）；`plugin-sdk/plugin` 内含
   go-plugin 的 RPC 接线（宿主/插件共用）。宿主 `internal/domain/entity` 对协议类型做**类型别名**
   （`type X = sdkentity.X`）+ `ValidatePluginResult` 转发，宿主业务代码继续经 entity 引用，
@@ -367,8 +368,9 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
         └── 群聊 → 按触发模式走 Agent / 忽略
 ```
 
-> 注（P6-002 已实现）：插件分支校验指令集后，回复（`Reply`）经 ctx 内 `domain.Sender` 执行发送
-> （§8.6 / B-017），群管理动作（`Actions`）仍只记录不执行（B-015）；普通消息触发判断命中后走
+> 注（P6-002/B-015 已实现）：插件分支校验指令集后，回复（`Reply`）经 ctx 内 `domain.Sender` 执行发送
+> （§8.6 / B-017），群管理动作（`Actions`）经 ctx 内 `domain.GroupManager` 执行（B-015，先发回复后
+> 执行动作，失败仅告警日志）；普通消息触发判断命中后走
 > 完整回复闭环：拼 prompt（§6）→ Agent 推理（记忆工具经 ctx 会话身份写入）→ 经 `domain.Sender`
 > 发送（§9.2 OnReplied 在发送成功环节记账）。上图为已实现链路。
 
@@ -400,14 +402,19 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 | member_facts | 成员事实记忆（1人N条；group_id 空=私聊，非空=群聊） |
 | persona | 人格模板（agent 绑定，见 §7） |
 | bot_state | bot 在各会话的运行态（群=group_id，私聊=`private:`+user_id，P5-002） |
-| group_config | 群静态配置（mode + 状态规则参数 10 列，P5-001/002） |
+| group_config | 群静态配置（mode + 状态规则参数 10 列 + 群管理开关，P5-001/002/B-015） |
+| schema_migrations | 迁移版本记录（version PK，B-015 起 migrate 为版本记录式） |
 
-> 说明：共 8 张表（7 张业务表 + conversation_summary 归档摘要表）。member_profile（个人画像统计）
-> 已于 P3-005 移除——成员上下文由 member_facts 承担；人格为 DB 人格模板（见 §7）。
+> 说明：共 9 张表（7 张业务表 + conversation_summary 归档摘要表 + schema_migrations 迁移版本表）。
+> member_profile（个人画像统计）已于 P3-005 移除——成员上下文由 member_facts 承担；人格为 DB 人格模板（见 §7）。
 > plugin_config（插件群配置）已移除——插件配置不落库，由插件自持（见 §8.6）。
 > group_config 为 P5-001 新增（per-group 静态配置，与 bot_state 运行态职责分离），P5-002 扩 10
 > 状态参数列（energy_*/cooldown_*/consecutive_*/rest_*/quiet_hours_*/short_message_chars），
-> 0/空 = 走全局 cfg.Control.state 兜底。
+> 0/空 = 走全局 cfg.Control.state 兜底；B-015 扩 `group_mgmt_enabled`（群管理单一开关，
+> 默认 1 开；无配置行同样视为开，0 = 显式关闭，与「0=走全局」语义不同，为显式开关）。
+> schema_migrations 自 B-015 起：migrate() 每迁移文件在单事务内执行一次并记录版本，
+> 失败整体回滚不记版本（下次启动重试）——新增列一律新建 `00N_*.sql`，不再改动 001
+> （SQLite 无 `ADD COLUMN IF NOT EXISTS`，幂等依赖版本记录，见 §15）。
 
 ---
 
@@ -448,6 +455,7 @@ internal/
     plugin.go                       #   Plugin 接口
     storage.go                      #   Storage 接口
     control.go                      #   Control 接口
+    group_manager.go                #   GroupManager 接口（B-015 群管理动作，见 §15）
   service/                          # 业务编排层，依赖 domain 接口
     agent/                          #   prompt 组装 → Agent 推理
     memory/                         #   窗口 + 群画像缓存 + 摘要流程
@@ -479,6 +487,58 @@ domain 零依赖
 ```
 
 上层依赖接口，底层实现接口，模块可独立开发替换。
+
+---
+
+## 15. 群管理动作执行（B-015）
+
+AI 自主群管理（禁言/踢人/改名片等）经 agent tool 触发，不走回复通道。与插件 `Actions`
+共用同一执行路径与护栏链——工具层与插件分支都不重复校验，护栏唯一落在
+`domain.GroupManager` 实现内。
+
+### 15.1 接口与注入
+
+- `domain.GroupManager`：仅一个方法 `Execute(ctx, entity.GroupAction) error`（统一入口；
+  `entity.GroupAction{Op, Target, Duration, Card}` 与插件 Actions 协议同类型，SDK 类型别名）。
+  与 `domain.Sender` 分离——动作权限不注入整条消息链，仅暴露给工具层与插件执行路径。
+- **per-event ctx 注入**（与 Session/Sender 同构）：onebot matcher 闭包构造
+  `botGroupManager`（持当次事件 `*zero.Ctx` + `domain.Storage` + botID）经
+  `domain.WithGroupManager` 注入 ctx；工具为共享单例（`NewGroupTools()` 无依赖），
+  eino 把 ctx 透传到工具 `InvokableRun`，工具经 `domain.GroupManagerFrom(ctx)` 取执行器。
+
+### 15.2 护栏链（集中在 `botGroupManager.Execute`）
+
+1. **群聊守卫**：`Event.GroupID == 0`（私聊/非群事件）拒绝；
+2. **per-group 开关**：`group_config.group_mgmt_enabled`（002 迁移，默认 1 开；
+   `GetGroupConfig` 无配置行返回 `ErrNotFound` = 默认开，0 = 显式关闭）；
+3. **管理员校验**（fail-closed）：触发者与 bot 都须为群主/管理员——经
+   `get_group_member_info`（noCache）查 `role`，`owner`/`admin` 通过；
+   查询失败/缺 role 一律拒绝；
+4. **动作映射**：mute → `set_group_ban`（duration 钳制 30 天）、unmute →
+   `set_group_ban`（duration=0，OneBot v11 规范 0=取消禁言）、kick → `set_group_kick`、
+   set_card → `set_group_card`；未知 Op / 非法 Target / duration≤0 拒绝；
+5. **API 响应检查**：经 `ctx.CallAction` 调用并检查 `APIResponse.Status/RetCode`——
+   `SetGroupBan` 等封装方法吞掉响应（void），动作失败无法反馈，高危能力静默失败不可接受。
+
+### 15.3 工具（internal/infra/ai/tools/group_tools.go）
+
+4 个工具：`group_mute`（user_id + duration）、`group_unmute`、`group_kick`、
+`group_set_card`（user_id + card）。Desc 写清触发边界（高危动作、仅群聊、开关与
+管理员前置条件）。工具只做：群聊守卫 → 取执行器 → 构造 `GroupAction` → Execute
+→ 中文反馈；不持 store、不重复校验。
+
+### 15.4 插件 Actions 接线
+
+`dispatchCommand` 发送 `Reply` 后执行 `res.Actions`（`executeActions` 逐条
+`gm.Execute`，失败即停返回首个错误，仅告警日志——命令分支吞错误语义维持现状）。
+先发回复后执行动作，用户能立刻看到插件反馈。
+
+### 15.5 迁移机制（B-015 起版本记录式）
+
+`migrate()` 建 `schema_migrations` 表（version PK + applied_at），每迁移文件在
+**单事务内**执行并记录版本；任一语句失败整体回滚、不记版本（下次启动重试）。
+旧库 001 重放靠 `CREATE TABLE IF NOT EXISTS` 幂等。新增列一律新建 `00N_*.sql`
+（SQLite 无 `ADD COLUMN IF NOT EXISTS`）。B-034 完整任务（校验等）仍后置。
 
 ### 14.3 启动流程
 

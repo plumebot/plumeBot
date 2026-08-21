@@ -66,16 +66,19 @@ const (
 	// ── group_config ──
 
 	sqlUpsertGroupConfig = `INSERT INTO group_config (group_id, mode, energy_max, energy_cost, energy_recover,
- energy_threshold, cooldown_seconds, consecutive_limit, rest_seconds, quiet_hours_start, quiet_hours_end, short_message_chars)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ energy_threshold, cooldown_seconds, consecutive_limit, rest_seconds, quiet_hours_start, quiet_hours_end, short_message_chars,
+ group_mgmt_enabled)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
  ON CONFLICT(group_id) DO UPDATE SET
  mode=excluded.mode, energy_max=excluded.energy_max, energy_cost=excluded.energy_cost,
  energy_recover=excluded.energy_recover, energy_threshold=excluded.energy_threshold,
  cooldown_seconds=excluded.cooldown_seconds, consecutive_limit=excluded.consecutive_limit,
  rest_seconds=excluded.rest_seconds, quiet_hours_start=excluded.quiet_hours_start,
- quiet_hours_end=excluded.quiet_hours_end, short_message_chars=excluded.short_message_chars`
+ quiet_hours_end=excluded.quiet_hours_end, short_message_chars=excluded.short_message_chars,
+ group_mgmt_enabled=excluded.group_mgmt_enabled`
 
 	sqlGetGroupConfig = `SELECT group_id, mode, energy_max, energy_cost, energy_recover,
- energy_threshold, cooldown_seconds, consecutive_limit, rest_seconds, quiet_hours_start, quiet_hours_end, short_message_chars
+ energy_threshold, cooldown_seconds, consecutive_limit, rest_seconds, quiet_hours_start, quiet_hours_end, short_message_chars,
+ group_mgmt_enabled
  FROM group_config WHERE group_id = ?`
 )

@@ -59,7 +59,7 @@ llm:
     describe_per_turn_cap: 10   # 每条消息图片描述条数上限；≤0 → 10
 
 tools:
-  enabled: [store_fact, learn_jargon, forget_fact]   # 启用的工具名列表（P3-004 记忆更新工具）；空 = 不注册任何工具
+  enabled: [store_fact, learn_jargon, forget_fact, group_mute, group_unmute, group_kick, group_set_card]   # 启用的工具名列表（P3-004 记忆更新工具 + B-015 群管理工具）；空 = 不注册任何工具；per-group 开关 group_config.group_mgmt_enabled 默认 1 开（0 = 显式关闭，仍需管理员权限）
 
 agent:
   name: PlumeBot              # agent 标识（adk 元数据，multi-agent 路由用）；空 → PlumeBot
