@@ -113,9 +113,13 @@ func (s *EventService) respond(ctx context.Context, msg entity.Message) error {
 			logger.S("group_id", msg.GroupID), logger.S("user_id", msg.UserID), logger.Err(err))
 		return nil
 	}
-	// 剥除 reply 开头可能出现的 "[1527301260]:"（可能连续出现多个）。
-	for strings.HasPrefix(reply, "[1527301260]:") {
-		reply = strings.TrimPrefix(reply, "[1527301260]:")
+	// 剥除 reply 开头可能出现的 "[...]:" 前缀（可能连续出现多个）。
+	for {
+		end := strings.IndexByte(reply, ']')
+		if !strings.HasPrefix(reply, "[") || end < 0 || end+1 >= len(reply) || reply[end+1] != ':' {
+			break
+		}
+		reply = strings.TrimPrefix(reply, reply[:end+2])
 	}
 	if strings.TrimSpace(reply) == "" {
 		logger.Debug("Agent 返回空回复，跳过",
