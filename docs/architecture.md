@@ -553,6 +553,10 @@ main()
   └── 7. infra/onebot.Run()          → ZeroBot 连接 NapCat，接收事件
 ```
 
+> 注（web/优雅关闭已实现，见 §16）：启动不再是「7 步最后一步阻塞 Run」——onebot `Run`
+> 改 goroutine，辅助 web（仅 /ping，127.0.0.1:8080）并行启动，主流程 `signal.Notify`
+> 等待退出信号，收到后优雅关闭（web Shutdown → defer 链清理 → 进程退出）。
+
 ### 14.4 消息链路
 
 ```
@@ -576,3 +580,35 @@ NapCat → OneBot WS → ZeroBot
 > 注（P6-002 已实现）：链路已完整——普通消息触发命中后走 context.Build → agent service →
 > eino 推理（Tool 调用写记忆）→ 经 `domain.Sender` 发送回复（B-003，发送成功才 OnReplied 记账，
 > 见 §9.2 / B-038）→ 窗口追加 bot 回复；命令消息插件回复同样经 Sender 发送（B-017）。
+
+---
+
+## 16. 运行与优雅关闭（web 健康检查）
+
+`cmd/bot/main.go` 的运行时骨架：bot 核心（OneBot 事件管线）与辅助 web 服务并存，
+主流程以信号等待方式阻塞，收到退出信号后按序优雅关闭自有资源（B-044）。
+
+### 16.1 web 服务（仅健康检查）
+
+- 定位：进程存活探针，非管理用途——仅 `GET /ping`（返回 `{"message":"pong"}`），
+  不暴露任何管理/业务端点；管理型 web（状态查看/手动发消息等）为后置需求（见 roadmap B 台账）。
+- 形态：`newWebServer` 用 gin（`gin.New` + `gin.Recovery`，避免 Default 每请求日志刷屏）
+  注册路由后包成 `http.Server`；`ListenAndServe` 放 goroutine。
+- 监听地址硬编码 `127.0.0.1:8080`（本期不进 config；仅本机回环，不做远程暴露）。
+- 失败语义：启动/运行错误（非 `http.ErrServerClosed`）仅 `logger.Error` 告警并继续运行——
+  web 是辅助服务，不因端口占用拖垮 bot 核心。
+
+### 16.2 优雅关闭流程（信号驱动）
+
+实际启动顺序（取代 §14.3 旧 7 步末尾的「阻塞 Run」表述）：
+
+1. 创建 onebot client 后 `go client.Run()`（goroutine；ZeroBot 底层自动重连）；
+2. `signal.Notify(os.Interrupt, SIGTERM)`，主 goroutine 阻塞等待退出信号；
+3. 收到信号：日志记录 → `http.Server.Shutdown`（5s 超时，排空 web 在途请求）→
+   return main 触发既有 defer 链（`pluginSvc.Close` → `storageInfra.Close` →
+   `logger.Sync`；注册顺序保证 LIFO 正确）→ 进程退出。
+
+约束（接受现实）：ZeroBot v1.8.2 无官方优雅停止 API（`RunAndBlock` 阻塞在 driver 无限重连
+循环，WSClient 无 Close），故 OneBot 连接自身不排空——进程退出即终止其内部 goroutine，
+QQ 在途事件不做等待。二次信号安全网：`signal.Stop` 恢复默认信号处理，关闭过程中再次
+Ctrl+C 直接终止进程（防卡死）。

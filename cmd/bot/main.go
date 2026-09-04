@@ -4,8 +4,14 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	sdkplugin "github.com/plumebot/plumebot-sdk/plugin"
 
 	"plumebot/internal/domain"
@@ -152,7 +158,7 @@ func main() {
 		return sdkplugin.NewClient(exePath)
 	})
 	if err := pluginSvc.Discover("./plugins"); err != nil {
-		logger.Fatal("插件发现失败", logger.Err(err))
+		logger.Warn("插件发现失败", logger.Err(err))
 	}
 	defer pluginSvc.Close()
 
@@ -180,7 +186,8 @@ func main() {
 	msgHandler := handler.NewMessageHandler(eventSvc)
 	noticeHandler := handler.NewNoticeHandler(eventSvc)
 
-	// 5. 启动 onebot 连接（阻塞，ZeroBot 底层自动重连）
+	// 5. 创建 onebot 连接（ZeroBot 底层自动重连；实际启动见 5.2——goroutine 方式，
+	// 主流程让位信号等待以实现优雅关闭）。
 	client := onebot.New(cfg.Onebot, cfg.Log.Level, msgHandler, noticeHandler, imgCache, storageInfra, cfg.Bot.SelfID)
 	if cfg.Bot.Name == "" {
 		cfg.Bot.Name = config.DefaultBotName // 展示用兜底
@@ -198,7 +205,59 @@ func main() {
 		logger.S("llm_api_key_set", strconv.FormatBool(chat.APIKey != "")), // 只标记是否配置，绝不打印密钥本身
 		logger.S("vision_model", cfg.LLM.VisionModel),
 	)
-	client.Run()
+	// 5.1 web 服务（仅健康检查 /ping，非管理用途，见 newWebServer）：
+	// 监听地址硬编码（本期不进配置）；ListenAndServe 放 goroutine，
+	// 运行错误（非主动关闭）仅告警——web 是辅助服务，不因端口占用拖垮 bot 核心。
+	web := newWebServer(httpAddr)
+	go func() {
+		logger.Info("web 服务启动", logger.S("addr", httpAddr))
+		if err := web.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("web 服务异常退出", logger.Err(err))
+		}
+	}()
+
+	// 5.2 启动 onebot 连接（goroutine）：ZeroBot 无官方优雅停止 API
+	//（RunAndBlock 阻塞在无限重连循环），停止由 5.3 信号路径 return main 后
+	// 进程退出终止其内部 goroutine，本进程资源经 defer 链清理。
+	go client.Run()
+
+	// 5.3 阻塞等待退出信号（Ctrl+C / SIGTERM），收到后优雅关闭：
+	// 先 http.Server.Shutdown 排空 web 在途请求，再 return 触发既有 defer 链
+	//（pluginSvc.Close → storageInfra.Close → logger.Sync；注册顺序保证 LIFO 正确，
+	// 且 panic 路径同样有清理保障）。
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	sig := <-quit
+	logger.Info("收到退出信号，开始优雅关闭", logger.S("signal", sig.String()))
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), webShutdownTimeout)
+	defer cancel()
+	if err := web.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("web 服务优雅关闭超时/失败", logger.Err(err))
+	}
+	logger.Info("web 服务已关闭，清理剩余资源（插件 → 存储 → 日志）")
+	// 恢复默认信号处理：关闭过程中再次 Ctrl+C 将直接终止进程（防卡死安全网）。
+	signal.Stop(quit)
+
+}
+
+// httpAddr 是 web 服务监听地址（仅健康检查 /ping；本期硬编码，不进配置）。
+// webShutdownTimeout 是 web 服务优雅关闭的等待上限（仅 /ping，通常瞬时完成）。
+const (
+	httpAddr           = "127.0.0.1:8080"
+	webShutdownTimeout = 5 * time.Second
+)
+
+// newWebServer 构建仅含健康检查 /ping 的 gin web 服务。
+// gin.New + Recovery（而非 Default）：避免健康轮询的每次请求日志刷屏。
+// 仅作进程存活探针，不暴露任何管理/业务端点。
+func newWebServer(addr string) *http.Server {
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(gin.Logger())
+	r.GET("/ping", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "pong"})
+	})
+	return &http.Server{Addr: addr, Handler: r}
 }
 
 // entryProvider 返回条目实际生效的 provider 名（与 Registry.NewAgent 的兜底一致）。

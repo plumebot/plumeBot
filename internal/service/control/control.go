@@ -126,9 +126,12 @@ func (s *ControlService) OnReplied(ctx context.Context, msg entity.Message) erro
 	l.Lock()
 	defer l.Unlock()
 
-	_, p, err := s.resolveParams(ctx, msg.GroupID)
+	mode, p, err := s.resolveParams(ctx, msg.GroupID)
 	if err != nil {
 		return err
+	}
+	if mode == ModeMention {
+		return nil
 	}
 	st, err := s.loadState(ctx, key)
 	if err != nil {

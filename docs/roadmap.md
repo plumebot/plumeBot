@@ -155,6 +155,7 @@
 | B-041 | P6 | 空 MessageID 根修（OneBot message_id=0） | P6-001 审查 BUG-2/6 | P6 有需要时 | 入站 `message_id=0` 时 `formatID` 返回 `""`，导致：SQLite `message_id=''` 行被多消息共享（描述写回错位）、窗口内多副本。P6-001 已在组装层防御（空 ID 不持久化描述 + 按位置去重）；根修在 onebot convert 对空 ID 合成唯一 ID（如时间+内容哈希），消除 `''` 行共享与窗口多副本 |
 | B-042 | 持续 | 配置环境变量覆盖为「敏感/机器字段专用」 | config 重构（环境变量扩展） | 密钥迁移 / 新增环境变量时 | 原 `PLUMEBOT_API_KEY`（单点覆盖 chat_model api_key）已废弃，改为按模型条目独立：`PLUMEBOT_APIKEY_<模型名大写>`（如 name=chat → `PLUMEBOT_APIKEY_CHAT`；name 空条目不参与）；另 `bot.self_id` 支持 `PLUMEBOT_SELFID` 覆盖（与 docker-compose ACCOUNT 共用同一来源）。非通用 env 读取（无 AutomaticEnv/BindEnv）。密钥迁移时删除旧 `PLUMEBOT_API_KEY`，旧变量不再生效；环境变量/注释变更需双处同步（config.default.yaml + 根 config.yaml + CLAUDE.md §6.6） |
 | B-043 | 后置 | 插件 SDK 发布为远程 module | P6-004（SDK 抽取） | 对外发布时 | `github.com/plumebot/plugin-sdk` 当前为仓库内子 module（宿主 `replace` 本地）；对外发布后去掉 replace 改远程依赖，第三方 `go get github.com/plumebot/plugin-sdk` 即可独立编写插件 |
+| B-044 | ✅ 已完成 | web 健康检查 + 信号优雅关闭 | main.go 临时 gin 正式化 | 已完成 | **已完成**：`cmd/bot/main.go` 临时 `go func(){ r.Run() }()` gin 正式化为 `newWebServer`（gin.New+Recovery，仅 `GET /ping` 存活探针；硬编码 `127.0.0.1:8080` 本期不进配置；`http.Server.ListenAndServe` goroutine，启动/运行失败仅告警不拖垮 bot 核心）；`client.Run()` 改 goroutine，主流程 `signal.Notify(os.Interrupt, SIGTERM)` 阻塞等待；收到信号 → `http.Server.Shutdown`（5s 超时排空在途请求）→ return 触发既有 defer 链（pluginSvc.Close → storageInfra.Close → logger.Sync）→ 进程退出终止 ZeroBot goroutine（ZeroBot 无官方 Stop API，接受现实约束不排空 QQ 在途事件）；`signal.Stop` 恢复默认处理作二次 Ctrl+C 安全网。见架构 §16 |
 
 ---
 
