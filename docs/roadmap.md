@@ -14,6 +14,7 @@
 | 第四阶段 | 人格与插件 | 人格模板化 + 子进程插件加载 | ✅ |
 | 第五阶段 | 触发控制 | mention/auto 模式 + 状态规则 | ✅ |
 | 第六阶段 | 联调验收 | 完整消息链路跑通，bot 可对话 | 🔄（P6-001 ✅，P6-002 ✅，P6-003 待实现） |
+| 第七阶段 | 管理后端 | 配置管理 Web 后端 + 简易前端页 | 🔄（P7-001 实现中） |
 
 ---
 
@@ -108,6 +109,17 @@
 | P6-002 | 完整消息链路 | 端到端：收到群消息 → 中间件 → 触发判断 → 拼 prompt → Agent 推理 → 回复（agent service 收 `Generate` 返回值经 ctx 内 `domain.Sender` 直接发送，机制见 B-003）→ 记忆更新 → 窗口追加。落地：B-003（`domain.Sender` + matcher 注入 + onebot `replyToChain` 转 `message.ReplyWithMessage`/`At`，`ctx.SendChain`）、B-017（插件回复经 Sender 执行，群动作仍归 B-015）、B-038（OnReplied 移至发送成功）、B-040（`GetWindow` 深拷贝 + `BackfillParts` 安全回填，无跨 LLM 阻塞、常规路径零冗余落库）、bot 回复合成 `self:` MessageID（规避空串冲突）、Agent 回复群聊被 @ 时仅 @ 触发者（不引用，避免引用预览带出 @bot） | P0 | 全部 | 前五阶段全部完成 | bot 在群聊中被 @ 能正常回复；记忆正常更新；摘要正常生成 | ✅ |
 | P6-003 | 稳定性验证 | 连续运行数小时，检查内存泄漏、goroutine 泄漏、SQLite 文件增长、API 调用频率 | P1 | 全部 | P6-002 完成 | 内存不持续增长；goroutine 不泄漏；API 调用不超过限制 |  |
 | P6-004 | 插件 SDK 抽取（方案 A） | 把插件协议 wire 类型与 go-plugin 接线抽为独立 module `github.com/plumebot/plugin-sdk`（`plugin-sdk/entity` 协议类型 + `plugin-sdk/plugin` `Serve`/`NewClient`，宿主 `replace` 本地）；宿主 `internal/domain/entity` 协议类型改类型别名 + `ValidatePluginResult` 转发；删除 `internal/infra/plugin_exe`；`cmd/bot` 直接用 SDK `NewClient`；示例插件改为只依赖 SDK（第三方可独立编写插件，不 import 宿主 internal） | P1 | plugin-sdk + domain/entity + cmd/bot + plugins/example | P4-002 完成 | 宿主 build/vet 通过；plugin-sdk entity/plugin 单测全绿（含 go-plugin 子进程往返）；示例插件经 SDK 编译并往返可用 | ✅ |
+
+---
+
+## 第七阶段｜管理后端
+
+目标：把 web 服务从仅 `GET /ping` 存活探针升级为**配置管理控制台**——管理员经浏览器访问简易前端页，对 **SQLite 中与 bot 行为相关的配置**做读取/修改，落地鉴权（JWT）、每配置独立接口、读写校验、DB 管理员账号（首次注册）。
+完整设计见 **`docs/admin-web-api-plan.md`**（已评审定案）。管理面覆盖：`group_config`、`persona`、`group_profile`（写后缓存失效）、`group_jargon`（审核流）、`member_facts`、`bot_state`（只读）；`config.yaml` 全局参数不做热更新。
+
+| 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 | 状态 |
+|---|---------|------|:---:|------|------|------|:--:|
+| P7-001 | 管理配置 API（gin + golang-jwt + service/admin + pkg/jwt + 简易前端页） | 落地计划书 §4～§10 全部设计，实现路径（一次一个子任务）：① `003_admin_user.sql` + Storage/entity 扩展 + sqlite 实现；② `pkg/jwt` + `handler/web` auth 中间件 + 注册/登录/改密流（含首账号注册门控）；③ `service/admin` 各配置域读写 + 群画像缓存失效 + fail-fast 校验；④ `handler/web` 路由 + 单页前端 + `admin` 段 config + main 注入（端口 9321~10024 被占用逐次 +1）；⑤ 测试补全 | P0 | handler/web + service/admin + pkg/jwt + domain + infra/sqlite + pkg/config + cmd/bot | 第六阶段完成 | `admin.enabled=true` 时浏览器可访问首页 → 无账号先注册、已有账号注册被拒 → 登录 → 群配置/人格/群画像（缓存失效断言）/黑话/成员事实/运行态读写与只读生效、端口递增、改密生效、鉴权拦截、单测全绿 | 🔄 |
 
 ---
 
