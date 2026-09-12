@@ -222,9 +222,9 @@ func main() {
 	if cfg.Admin.Enabled {
 		web = startAdminWeb(*cfg, dataDir, storageInfra, memorySvc)
 	} else {
-		web = newWebServer(httpAddr)
+		web = newWebServer(strconv.Itoa(cfg.Admin.Port))
 		go func() {
-			logger.Info("web 服务启动", logger.S("addr", httpAddr))
+			logger.Info("web 服务启动", logger.S("addr", strconv.Itoa(cfg.Admin.Port)))
 			if err := web.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logger.Error("web 服务异常退出", logger.Err(err))
 			}
@@ -260,7 +260,6 @@ func main() {
 // httpAddr 是 web 服务监听地址（admin.enabled=false 时的仅 /ping 回退；硬编码不进配置）。
 // webShutdownTimeout 是 web 服务优雅关闭的等待上限（通常瞬时完成）。
 const (
-	httpAddr           = "127.0.0.1:8080"
 	webShutdownTimeout = 5 * time.Second
 )
 
