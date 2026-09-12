@@ -55,6 +55,38 @@ type Storage interface {
 	UpsertGroupConfig(ctx context.Context, cfg entity.GroupConfig) error
 	GetGroupConfig(ctx context.Context, groupID string) (*entity.GroupConfig, error)
 
+	// ── admin 管理后端扩展（P7-001）──
+
+	// ── group_config (admin) ──
+	// ListGroupConfigs 列出全部已配置群的静态配置（管理面；未配置群不出现）。
+	ListGroupConfigs(ctx context.Context) ([]entity.GroupConfig, error)
+	// DeleteGroupConfig 删除单群配置行（恢复全局兜底）；不存在时返回 domain.ErrNotFound。
+	DeleteGroupConfig(ctx context.Context, groupID string) error
+
+	// ── persona (admin) ──
+	// ListPersonas 列出全部人格模板。
+	ListPersonas(ctx context.Context) ([]entity.Persona, error)
+	// UpsertPersona 按 agent 幂等写人格模板（存在更新、不存在插入，免两段查 id）。
+	UpsertPersona(ctx context.Context, persona entity.Persona) error
+
+	// ── group_jargon (admin) ──
+	// ListJargonWithStatus 列出指定群全部黑话（含审核状态，管理面视图）。
+	ListJargonWithStatus(ctx context.Context, groupID string) ([]entity.Jargon, error)
+
+	// ── group_profile (admin) ──
+	// DeleteGroupProfile 删除单群画像（恢复「无画像」态）；不存在时返回 domain.ErrNotFound。
+	DeleteGroupProfile(ctx context.Context, groupID string) error
+
+	// ── admin_user ──
+	// GetAdminUserByName 按用户名查询管理员账号；不存在时返回 domain.ErrNotFound。
+	GetAdminUserByName(ctx context.Context, username string) (*entity.AdminUser, error)
+	// CreateAdminUser 创建管理员账号；username 冲突（UNIQUE）时返回 domain.ErrConflict。
+	CreateAdminUser(ctx context.Context, u entity.AdminUser) (int64, error)
+	// ListAdminUsers 列出全部管理员账号（注册门控用）。
+	ListAdminUsers(ctx context.Context) ([]entity.AdminUser, error)
+	// UpdateAdminUserPassword 更新指定用户的密码散列；用户名不存在时返回 domain.ErrNotFound。
+	UpdateAdminUserPassword(ctx context.Context, username, hash string) error
+
 	// Close 关闭数据库连接。
 	Close() error
 }

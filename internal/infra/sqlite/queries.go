@@ -81,4 +81,39 @@ const (
  energy_threshold, cooldown_seconds, consecutive_limit, rest_seconds, quiet_hours_start, quiet_hours_end, short_message_chars,
  group_mgmt_enabled
  FROM group_config WHERE group_id = ?`
+
+	// ── admin 管理后端（P7-001）──
+
+	// ── group_config (admin) ──
+
+	sqlListGroupConfigs = `SELECT group_id, mode, energy_max, energy_cost, energy_recover,
+ energy_threshold, cooldown_seconds, consecutive_limit, rest_seconds, quiet_hours_start, quiet_hours_end, short_message_chars,
+ group_mgmt_enabled FROM group_config ORDER BY group_id`
+
+	sqlDeleteGroupConfig = `DELETE FROM group_config WHERE group_id = ?`
+
+	// ── persona (admin) ──
+
+	sqlListPersonas = `SELECT id, agent, name, system_prompt FROM persona ORDER BY id`
+
+	sqlUpsertPersona = `INSERT INTO persona (agent, name, system_prompt) VALUES (?, ?, ?)
+ ON CONFLICT(agent) DO UPDATE SET name=excluded.name, system_prompt=excluded.system_prompt`
+
+	// ── group_jargon (admin) ──
+
+	sqlListJargonWithStatus = `SELECT group_id, jargon, status FROM group_jargon WHERE group_id = ? ORDER BY id`
+
+	// ── group_profile (admin) ──
+
+	sqlDeleteGroupProfile = `DELETE FROM group_profile WHERE group_id = ?`
+
+	// ── admin_user ──
+
+	sqlGetAdminUserByName = `SELECT id, username, password_hash, created_at, updated_at FROM admin_user WHERE username = ?`
+
+	sqlCreateAdminUser = `INSERT INTO admin_user (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)`
+
+	sqlListAdminUsers = `SELECT id, username, password_hash, created_at, updated_at FROM admin_user ORDER BY id`
+
+	sqlUpdateAdminUserPassword = `UPDATE admin_user SET password_hash = ?, updated_at = strftime('%s','now') WHERE username = ?`
 )
