@@ -71,6 +71,12 @@ const (
 	DefaultJargonCap            = 20 // jargon_cap ≤0 → 20（confirmed 黑话条数上限）
 	DefaultDescribeRecentRounds = 5  // describe_recent_rounds ≤0 → 5（只描述窗口最近 N 轮消息的图片）
 	DefaultDescribePerTurnCap   = 10 // describe_per_turn_cap ≤0 → 10（每条消息图片描述条数上限）
+
+	// 管理后端默认值（P7-001 起由 cmd/bot 消费；port≤0/ttl≤0 时消费方兜底，
+	// 与 config.default.yaml admin 段的推荐值一致，改动需双处同步）。
+	DefaultAdminPort               = 9321  // admin.port 空 → 9321（起始端口，被占用逐次 +1）
+	MaxAdminPort                   = 10024 // 端口扫描上限（含；全范围占用仅告警）
+	DefaultAdminTokenTTLSeconds    = 86400 // admin.token_ttl_seconds ≤0 → 24h
 )
 
 // Config 是应用程序的根配置结构体。
@@ -83,6 +89,7 @@ type Config struct {
 	LLM        LLMConfig        `mapstructure:"llm"`
 	Tools      ToolsConfig      `mapstructure:"tools"`
 	Agent      AgentConfig      `mapstructure:"agent"`
+	Admin      AdminConfig      `mapstructure:"admin"`
 }
 
 // BotConfig 包含 bot 基础信息。
@@ -231,6 +238,20 @@ type AgentConfig struct {
 	// SystemPrompt 系统提示词（P6-001 起不再经 Instruction 注入，作为组装兜底 defaultPersona，
 	// 由 service/memory BuildMessages 在 persona 模板未命中/空时使用）；空 → DefaultSystemPrompt。
 	SystemPrompt string `mapstructure:"system_prompt"`
+}
+
+// AdminConfig 是管理后端（P7-001，docs/admin-web-api-plan.md §8.2）的配置段。
+// 只承担服务自身配置，**不含任何账号/密码**（凭证唯一事实来源是 DB admin_user 表）；
+// 空值由消费方（cmd/bot）按 DefaultAdmin* 常量兜底。
+type AdminConfig struct {
+	// Enabled 管理 API + 前端页开关；false → 仅保留 /ping 存活探针。bool 零值 = 关（fail-closed）。
+	Enabled bool `mapstructure:"enabled"`
+	// Port gin 监听起始端口（被占用逐次 +1，扫描至 MaxAdminPort）；≤0 → DefaultAdminPort。
+	Port int `mapstructure:"port"`
+	// JWTSecret 签名密钥；空 → 首启生成并持久化 data/admin_jwt_secret（0600，跨重启保持有效）。
+	JWTSecret string `mapstructure:"jwt_secret"`
+	// TokenTTLSeconds 登录 token 有效期（秒）；≤0 → DefaultAdminTokenTTLSeconds。
+	TokenTTLSeconds int `mapstructure:"token_ttl_seconds"`
 }
 
 // Load 从 path 加载 YAML 配置文件。

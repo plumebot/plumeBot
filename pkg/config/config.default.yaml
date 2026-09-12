@@ -65,3 +65,9 @@ agent:
   name: PlumeBot              # agent 标识（adk 元数据，multi-agent 路由用）；空 → PlumeBot
   description: ""             # 能力描述（adk 元数据）；空 → 默认描述
   system_prompt: "你是mifi，你需要尽可能伪装成人类，不可以用机器人的口语回答，回答简洁犀利如:\nA:你个人机 你:和一位，你个入\nA:我喜欢你 你：我也喜欢你"
+
+admin:                        # 管理后端（P7-001）；本段只含服务配置，不承载任何账号/密码
+  enabled: true               # 管理 API + 前端页开关；false → 仅保留 /ping 存活探针
+  port: 9321                  # gin 监听起始端口；被占用逐次 +1（扫描至 10024）
+  jwt_secret: ""              # JWT 签名密钥；空 → 首启生成并持久化 data/admin_jwt_secret（0600）
+  token_ttl_seconds: 86400    # 登录 token 有效期（秒）；≤0 → 86400

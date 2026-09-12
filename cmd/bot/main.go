@@ -3,11 +3,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,17 +22,20 @@ import (
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler"
+	"plumebot/internal/handler/web"
 	"plumebot/internal/infra/ai"
 	"plumebot/internal/infra/ai/tools"
 	"plumebot/internal/infra/imagecache"
 	"plumebot/internal/infra/onebot"
 	"plumebot/internal/infra/sqlite"
+	"plumebot/internal/service/admin"
 	"plumebot/internal/service/agent"
 	"plumebot/internal/service/control"
 	"plumebot/internal/service/event"
 	"plumebot/internal/service/memory"
 	"plumebot/internal/service/plugin"
 	"plumebot/pkg/config"
+	"plumebot/pkg/jwt"
 	"plumebot/pkg/logger"
 )
 
@@ -205,16 +213,23 @@ func main() {
 		logger.S("llm_api_key_set", strconv.FormatBool(chat.APIKey != "")), // 只标记是否配置，绝不打印密钥本身
 		logger.S("vision_model", cfg.LLM.VisionModel),
 	)
-	// 5.1 web 服务（仅健康检查 /ping，非管理用途，见 newWebServer）：
-	// 监听地址硬编码（本期不进配置）；ListenAndServe 放 goroutine，
-	// 运行错误（非主动关闭）仅告警——web 是辅助服务，不因端口占用拖垮 bot 核心。
-	web := newWebServer(httpAddr)
-	go func() {
-		logger.Info("web 服务启动", logger.S("addr", httpAddr))
-		if err := web.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("web 服务异常退出", logger.Err(err))
-		}
-	}()
+	// 5.1 web 服务（P7-001 升级为配置管理控制台）：
+	//   - admin.enabled=true：jwt secret 解析 → admin service → handler/web.NewRouter（/ping + /api/v1 + 前端页）
+	//     → 端口扫描监听（admin.port 起，被占用逐次 +1，扫描至 MaxAdminPort；全失败仅告警返回 nil）；
+	//   - false：回退仅健康检查 /ping（newWebServer，硬编码 127.0.0.1:8080）。
+	// ListenAndServe 放 goroutine，运行错误（非主动关闭）仅告警——web 是辅助服务，不拖垮 bot 核心。
+	var web *http.Server
+	if cfg.Admin.Enabled {
+		web = startAdminWeb(*cfg, dataDir, storageInfra, memorySvc)
+	} else {
+		web = newWebServer(httpAddr)
+		go func() {
+			logger.Info("web 服务启动", logger.S("addr", httpAddr))
+			if err := web.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("web 服务异常退出", logger.Err(err))
+			}
+		}()
+	}
 
 	// 5.2 启动 onebot 连接（goroutine）：ZeroBot 无官方优雅停止 API
 	//（RunAndBlock 阻塞在无限重连循环），停止由 5.3 信号路径 return main 后
@@ -231,8 +246,10 @@ func main() {
 	logger.Info("收到退出信号，开始优雅关闭", logger.S("signal", sig.String()))
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), webShutdownTimeout)
 	defer cancel()
-	if err := web.Shutdown(shutdownCtx); err != nil {
-		logger.Warn("web 服务优雅关闭超时/失败", logger.Err(err))
+	if web != nil { // 全端口占用时 startAdminWeb 返回 nil，无可关闭的 web
+		if err := web.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("web 服务优雅关闭超时/失败", logger.Err(err))
+		}
 	}
 	logger.Info("web 服务已关闭，清理剩余资源（插件 → 存储 → 日志）")
 	// 恢复默认信号处理：关闭过程中再次 Ctrl+C 将直接终止进程（防卡死安全网）。
@@ -240,12 +257,79 @@ func main() {
 
 }
 
-// httpAddr 是 web 服务监听地址（仅健康检查 /ping；本期硬编码，不进配置）。
-// webShutdownTimeout 是 web 服务优雅关闭的等待上限（仅 /ping，通常瞬时完成）。
+// httpAddr 是 web 服务监听地址（admin.enabled=false 时的仅 /ping 回退；硬编码不进配置）。
+// webShutdownTimeout 是 web 服务优雅关闭的等待上限（通常瞬时完成）。
 const (
 	httpAddr           = "127.0.0.1:8080"
 	webShutdownTimeout = 5 * time.Second
 )
+
+// startAdminWeb 构建并启动管理后端 web 服务（P7-001）：
+// JWT secret 解析 → admin service → handler/web.NewRouter → 端口扫描监听。
+// 返回的 *http.Server 供优雅关闭；全端口占用时返回 nil（打破 shutdown 判空）。
+func startAdminWeb(cfg config.Config, dataDir string, store domain.Storage, memSvc *memory.MemoryService) *http.Server {
+	secret, err := resolveAdminJWTSecret(dataDir, cfg.Admin.JWTSecret)
+	if err != nil {
+		logger.Fatal("解析 admin JWT 密钥失败", logger.Err(err))
+	}
+	ttl := time.Duration(cfg.Admin.TokenTTLSeconds) * time.Second
+	if ttl <= 0 {
+		ttl = time.Duration(config.DefaultAdminTokenTTLSeconds) * time.Second
+	}
+	port := cfg.Admin.Port
+	if port <= 0 {
+		port = config.DefaultAdminPort
+	}
+	mgr := jwt.NewManager(secret, ttl)
+	adminSvc := admin.NewService(store, memSvc, mgr)
+	return newAdminWebServer(web.NewRouter(adminSvc, mgr), port)
+}
+
+// resolveAdminJWTSecret 解析管理后端 JWT 密钥：
+// 显式配置非空直接使用；否则读 data/admin_jwt_secret（存在即用，跨重启 token 保持有效），
+// 不存在则生成 32 字节随机密钥写回（0600）。密钥绝不打印。
+func resolveAdminJWTSecret(dataDir, configured string) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+	path := filepath.Join(dataDir, "admin_jwt_secret")
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		return strings.TrimSpace(string(b)), nil
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	secret := base64.RawURLEncoding.EncodeToString(b)
+	if err := os.WriteFile(path, []byte(secret), 0o600); err != nil {
+		return "", err
+	}
+	return secret, nil
+}
+
+// newAdminWebServer 在 startPort~MaxAdminPort 内寻找可用端口并启动 gin 服务（回环绑定）。
+// 端口被占用逐次 +1；全范围失败仅告警并返回 nil（bot 核心继续运行，沿「web 辅助不拖垮」语义）。
+func newAdminWebServer(handler http.Handler, startPort int) *http.Server {
+	for port := startPort; port <= config.MaxAdminPort; port++ {
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			logger.Warn("admin web 端口被占用，尝试下一个", logger.S("addr", addr), logger.Err(err))
+			continue
+		}
+		srv := &http.Server{Addr: addr, Handler: handler}
+		go func() {
+			if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("admin web 服务异常退出", logger.Err(err))
+			}
+		}()
+		logger.Info("admin web 服务启动", logger.S("addr", addr))
+		return srv
+	}
+	logger.Warn("admin web 未启动：端口范围被占用",
+		logger.I("start_port", startPort), logger.I("max_port", config.MaxAdminPort))
+	return nil
+}
 
 // newWebServer 构建仅含健康检查 /ping 的 gin web 服务。
 // gin.New + Recovery（而非 Default）：避免健康轮询的每次请求日志刷屏。

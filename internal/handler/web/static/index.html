@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PlumeBot 管理</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; background: #f5f6fa; color: #333; }
+  header { background: #282c34; color: #eee; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header .op { font-size: 13px; color: #9fb0c3; cursor: pointer; margin-left: 12px; }
+  main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+  .card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h2 { font-size: 16px; margin-bottom: 12px; }
+  h3 { font-size: 14px; color: #555; margin: 12px 0 8px; }
+  label { display: block; font-size: 12px; color: #888; margin: 8px 0 4px; }
+  input, textarea, select { width: 100%; padding: 8px 10px; border: 1px solid #d9dce1; border-radius: 6px; font-size: 13px; }
+  textarea { min-height: 60px; font-family: inherit; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 12px; }
+  button { background: #4b6eaf; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; margin: 10px 8px 0 0; }
+  button.danger { background: #c25050; }
+  button.gray { background: #7d8694; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eceef1; }
+  th { color: #888; font-weight: 500; }
+  .msg { font-size: 13px; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: none; }
+  .msg.err { background: #fbe4e4; color: #a33; display: block; }
+  .msg.ok { background: #e3f4e3; color: #387038; display: block; }
+  #auth-view { max-width: 380px; margin: 80px auto; }
+  .hidden { display: none !important; }
+  .inline { display: inline-block !important; width: auto !important; }
+  .muted { color: #999; font-size: 12px; }
+</style>
+</head>
+<body>
+<header id="app-bar" class="hidden">
+  <h1>PlumeBot 管理</h1>
+  <div>
+    <span id="whoami" class="muted"></span>
+    <span class="op" onclick="showTab('cfg')">群配置</span>
+    <span class="op" onclick="showTab('persona')">人格</span>
+    <span class="op" onclick="showTab('profile')">群画像</span>
+    <span class="op" onclick="showTab('jargon')">黑话</span>
+    <span class="op" onclick="showTab('facts')">成员事实</span>
+    <span class="op" onclick="showTab('state')">运行态</span>
+    <span class="op" onclick="showTab('pwd')">改密</span>
+    <span class="op" onclick="logout()">退出</span>
+  </div>
+</header>
+
+<main id="auth-view">
+  <div class="card">
+    <h2 id="auth-title">登录</h2>
+    <div id="register-form" class="hidden">
+      <label>用户名</label><input id="reg-user">
+      <label>密码（至少 8 位）</label><input id="reg-pass" type="password">
+      <button onclick="doRegister()">注册并登录</button>
+      <span class="op" onclick="toggleAuthForm()">已有账号？去登录</span>
+    </div>
+    <div id="login-form">
+      <label>用户名</label><input id="login-user">
+      <label>密码</label><input id="login-pass" type="password">
+      <button onclick="doLogin()">登录</button>
+      <span class="op" onclick="toggleAuthForm()">首次使用？去注册</span>
+    </div>
+    <div id="auth-msg" class="msg"></div>
+  </div>
+</main>
+
+<main id="app-view" class="hidden">
+  <div class="msg" id="app-msg"></div>
+
+  <section id="tab-cfg" class="hidden">
+    <div class="card">
+      <h2>群配置</h2>
+      <div class="row">
+        <div><label>群 ID</label><input id="cfg-gid-new" placeholder="如 123456789"></div>
+        <div><label>触发模式</label><select id="cfg-mode-new"><option value="mention">mention</option><option value="auto">auto</option></select></div>
+      </div>
+      <button onclick="loadCfgs()">配置列表</button>
+      <button onclick="upsertCfgInput()">新建/更新该群</button>
+      <table id="cfg-table"><thead><tr><th>群</th><th>模式</th><th>精力上限</th><th>开关</th><th></th></tr></thead><tbody></tbody></table>
+      <div id="cfg-editor"></div>
+    </div>
+  </section>
+
+  <section id="tab-persona" class="hidden">
+    <div class="card">
+      <h2>人格模板</h2>
+      <button onclick="loadPersonas()">刷新列表</button>
+      <table id="persona-table"><thead><tr><th>agent</th><th>名称</th><th>system_prompt</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card" id="persona-editor">
+      <h2>编辑人格</h2>
+      <label>agent（不可修改）</label><input id="persona-agent">
+      <label>名称</label><input id="persona-name">
+      <label>system_prompt</label><textarea id="persona-prompt" rows="8"></textarea>
+      <button onclick="upsertPersona()">保存（下一条消息生效）</button>
+    </div>
+  </section>
+
+  <section id="tab-profile" class="hidden">
+    <div class="card">
+      <h2>群画像</h2>
+      <label>群 ID</label><input id="profile-gid">
+      <button onclick="loadProfile()">查看</button>
+      <div id="profile-editor">
+        <label>culture（群文化）</label><input id="profile-culture">
+        <label>active_hours（活跃时段）</label><input id="profile-active">
+        <label>topics（话题，逗号分隔）</label><input id="profile-topics">
+        <label>rules（群规，逗号分隔）</label><input id="profile-rules">
+        <label>atmosphere（氛围，逗号分隔）</label><input id="profile-atm">
+        <button onclick="saveProfile()">保存（写后失效缓存）</button>
+        <button class="danger" onclick="deleteProfile()">删除画像</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-jargon" class="hidden">
+    <div class="card">
+      <h2>群黑话</h2>
+      <div class="row">
+        <div><label>群 ID</label><input id="jargon-gid"></div>
+        <div><label>新增黑话（默认已确认）</label><input id="jargon-new"></div>
+      </div>
+      <button onclick="loadJargons()">列出</button>
+      <button onclick="addJargon()">添加</button>
+      <table id="jargon-table"><thead><tr><th>黑话</th><th>状态</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-facts" class="hidden">
+    <div class="card">
+      <h2>成员事实</h2>
+      <div class="row">
+        <div><label>群 ID（私聊留空）</label><input id="fact-gid"></div>
+        <div><label>用户 QQ</label><input id="fact-uid"></div>
+        <div><label>补记事实</label><input id="fact-new"></div>
+      </div>
+      <button onclick="loadFacts()">查询</button>
+      <button onclick="addFact()">补记</button>
+      <table id="fact-table"><thead><tr><th>事实</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-state" class="hidden">
+    <div class="card">
+      <h2>运行态（只读）</h2>
+      <label>会话键（群 ID 或 private:QQ）</label><input id="state-key">
+      <button onclick="loadState()">查看</button>
+      <pre id="state-view" style="background:#f7f8fa;padding:12px;border-radius:6px;margin-top:10px;font-size:12px;"></pre>
+    </div>
+  </section>
+
+  <section id="tab-pwd" class="hidden">
+    <div class="card">
+      <h2>修改密码</h2>
+      <label>旧密码</label><input id="pwd-old" type="password">
+      <label>新密码（至少 8 位）</label><input id="pwd-new" type="password">
+      <button onclick="changePassword()">提交</button>
+    </div>
+  </section>
+</main>
+
+<script>
+// ── 通用 ──
+const $ = id => document.getElementById(id);
+function flash(msg, ok) { const el = $('app-msg'); el.className = 'msg ' + (ok ? 'ok' : 'err'); el.textContent = msg || ''; }
+function flashAuth(msg) { const el = $('auth-msg'); el.className = 'msg ' + (msg ? 'err' : ''); el.textContent = msg || ''; }
+
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = localStorage.getItem('plumebot_admin_token');
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch('/api/v1' + path, {
+    method: opts.method || 'GET',
+    headers,
+    body: opts.body != null ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.code === 4011 && token) { showAuth(); throw new Error(data.message || '登录已过期'); }
+  if (data.code !== 0) throw new Error(data.message || ('请求失败 ' + res.status));
+  return data.data;
+}
+
+// ── 认证 ──
+function showAuth() {
+  localStorage.removeItem('plumebot_admin_token');
+  $('app-bar').classList.add('hidden'); $('app-view').classList.add('hidden');
+  $('auth-view').classList.remove('hidden');
+  flashAuth(''); checkAuthStatus();
+}
+async function checkAuthStatus() {
+  try {
+    const d = await api('/auth/status');
+    if (d.registered) { $('register-form').classList.add('hidden'); $('login-form').classList.remove('hidden'); $('auth-title').textContent = '登录'; }
+    else { $('register-form').classList.remove('hidden'); $('login-form').classList.add('hidden'); $('auth-title').textContent = '首次使用：注册管理员'; }
+  } catch (e) { /* 后端不可达时保留默认登录表单 */ }
+}
+function toggleAuthForm() {
+  $('register-form').classList.toggle('hidden'); $('login-form').classList.toggle('hidden');
+  $('auth-title').textContent = $('register-form').classList.contains('hidden') ? '登录' : '首次使用：注册管理员';
+  flashAuth('');
+}
+async function doRegister() {
+  try {
+    const d = await api('/auth/register', { method: 'POST', body: { username: $('reg-user').value.trim(), password: $('reg-pass').value } });
+    enterApp(d.token);
+  } catch (e) { flashAuth(e.message); }
+}
+async function doLogin() {
+  try {
+    const d = await api('/auth/login', { method: 'POST', body: { username: $('login-user').value.trim(), password: $('login-pass').value } });
+    enterApp(d.token);
+  } catch (e) { flashAuth(e.message); }
+}
+function enterApp(token) {
+  localStorage.setItem('plumebot_admin_token', token);
+  $('auth-view').classList.add('hidden'); $('app-bar').classList.remove('hidden'); $('app-view').classList.remove('hidden');
+  api('/auth/me').then(d => { $('whoami').textContent = '当前：' + d.username; }).catch(() => {});
+  showTab('cfg');
+}
+function logout() { showAuth(); }
+
+function showTab(name) {
+  ['cfg','persona','profile','jargon','facts','state','pwd'].forEach(n => $('tab-' + n).classList.add('hidden'));
+  $('tab-' + name).classList.remove('hidden');
+  if (name === 'cfg') loadCfgs();
+  if (name === 'persona') loadPersonas();
+}
+
+// ── 群配置 ──
+async function loadCfgs() {
+  try {
+    const d = await api('/groups/configs');
+    const tb = $('cfg-table').querySelector('tbody'); tb.innerHTML = '';
+    (d.items || []).forEach(it => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(it.group_id)}</td><td>${esc(it.mode || '(全局)')}</td><td>${it.energy_max || '全局'}</td>
+        <td>${it.group_mgmt_enabled == null ? '全局' : it.group_mgmt_enabled}</td>
+        <td><button class="gray" onclick="editCfg('${escA(it.group_id)}')">编辑</button>
+            <button class="danger" onclick="delCfg('${escA(it.group_id)}')">删除</button></td>`;
+      tb.appendChild(tr);
+    });
+  } catch (e) { flash(e.message); }
+}
+async function editCfg(gid) {
+  try {
+    const it = await api('/groups/' + encodeURIComponent(gid) + '/config');
+    renderCfgEditor(gid, it);
+  } catch (e) { flash(e.message); }
+}
+function renderCfgEditor(gid, c) {
+  const fields = [
+    ['mode', '触发模式'], ['group_mgmt_enabled', '群管理开关(1/0)'],
+    ['energy_max','精力上限'], ['energy_cost','每次消耗'], ['energy_recover','恢复(点/分)'], ['energy_threshold','触发阈值'],
+    ['cooldown_seconds','冷却(秒)'], ['consecutive_limit','连续上限'], ['rest_seconds','休息(秒)'],
+    ['quiet_hours_start','静默起 HH:MM'], ['quiet_hours_end','静默止 HH:MM'], ['short_message_chars','短消息阈值'],
+  ];
+  $('cfg-editor').innerHTML = `<h3>编辑群 ${esc(gid)}（0/空 = 走全局）</h3>` +
+    fields.map(([k, label]) => `<label>${label}</label><input class="cfg-f" data-k="${k}" value="${escA(c[k] ?? '')}">`).join('') +
+    `<button onclick="saveCfg('${escA(gid)}')">保存</button>`;
+}
+async function upsertCfgInput() {
+  const gid = $('cfg-gid-new').value.trim();
+  if (!gid) return flash('请填写群 ID');
+  renderCfgEditor(gid, { mode: $('cfg-mode-new').value });
+}
+async function saveCfg(gid) {
+  const body = { group_mgmt_enabled: 0 };
+  document.querySelectorAll('.cfg-f').forEach(el => {
+    let v = el.value;
+    const numKeys = ['group_mgmt_enabled','energy_max','energy_cost','energy_recover','energy_threshold','cooldown_seconds','consecutive_limit','rest_seconds','short_message_chars'];
+    body[el.dataset.k] = numKeys.includes(el.dataset.k) ? (v === '' ? 0 : Number(v)) : v;
+  });
+  try { await api('/groups/' + encodeURIComponent(gid) + '/config', { method: 'PUT', body }); flash('群配置已保存（即时生效）', true); loadCfgs(); }
+  catch (e) { flash(e.message); }
+}
+async function delCfg(gid) {
+  try { await api('/groups/' + encodeURIComponent(gid) + '/config', { method: 'DELETE' }); flash('已删除，恢复全局兜底', true); loadCfgs(); }
+  catch (e) { flash(e.message); }
+}
+
+// ── 人格 ──
+async function loadPersonas() {
+  try {
+    const d = await api('/personas');
+    const tb = $('persona-table').querySelector('tbody'); tb.innerHTML = '';
+    (d.items || []).forEach(it => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(it.agent)}</td><td>${esc(it.name)}</td><td style="max-width:380px;word-break:break-all">${esc(it.system_prompt.slice(0, 60))}</td>
+        <td><button class="gray" onclick="editPersona('${escA(it.agent)}','${escA(it.name)}','${escA(it.system_prompt)}')">编辑</button></td>`;
+      tb.appendChild(tr);
+    });
+  } catch (e) { flash(e.message); }
+}
+function editPersona(agent, name, prompt) {
+  $('persona-agent').value = agent; $('persona-name').value = name; $('persona-prompt').value = prompt;
+}
+async function upsertPersona() {
+  const agent = $('persona-agent').value.trim();
+  if (!agent) return flash('请填写 agent');
+  try {
+    await api('/personas/' + encodeURIComponent(agent), { method: 'PUT', body: { name: $('persona-name').value, system_prompt: $('persona-prompt').value } });
+    flash('人格已保存（下一条消息生效）', true); loadPersonas();
+  } catch (e) { flash(e.message); }
+}
+
+// ── 群画像 ──
+async function loadProfile() {
+  const gid = $('profile-gid').value.trim(); if (!gid) return flash('请填写群 ID');
+  try {
+    const it = await api('/groups/' + encodeURIComponent(gid) + '/profile');
+    $('profile-culture').value = it.culture || ''; $('profile-active').value = it.active_hours || '';
+    $('profile-topics').value = (it.topics || []).join(','); $('profile-rules').value = (it.rules || []).join(',');
+    $('profile-atm').value = (it.atmosphere || []).join(',');
+    flash(it.configured ? '已加载画像' : '该群无画像（走无画像态），可直接填写保存', true);
+  } catch (e) { flash(e.message); }
+}
+function profileBody() {
+  const split = s => s.split(',').map(x => x.trim()).filter(Boolean);
+  return { culture: $('profile-culture').value, active_hours: $('profile-active').value,
+    topics: split($('profile-topics').value), rules: split($('profile-rules').value), atmosphere: split($('profile-atm').value) };
+}
+async function saveProfile() {
+  const gid = $('profile-gid').value.trim(); if (!gid) return flash('请填写群 ID');
+  try { await api('/groups/' + encodeURIComponent(gid) + '/profile', { method: 'PUT', body: profileBody() }); flash('画像已保存（缓存已失效）', true); }
+  catch (e) { flash(e.message); }
+}
+async function deleteProfile() {
+  const gid = $('profile-gid').value.trim(); if (!gid) return flash('请填写群 ID');
+  try { await api('/groups/' + encodeURIComponent(gid) + '/profile', { method: 'DELETE' }); flash('画像已删除', true); }
+  catch (e) { flash(e.message); }
+}
+
+// ── 黑话 ──
+async function loadJargons() {
+  const gid = $('jargon-gid').value.trim(); if (!gid) return flash('请填写群 ID');
+  try {
+    const d = await api('/groups/' + encodeURIComponent(gid) + '/jargons?status=all');
+    const tb = $('jargon-table').querySelector('tbody'); tb.innerHTML = '';
+    (d.items || []).forEach(it => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(it.jargon)}</td><td>${esc(it.status)}</td>
+        <td>${it.status === 'pending' ? `<button onclick="confirmJargon('${escA(it.jargon)}')">确认</button>` : ''}
+            <button class="danger" onclick="delJargon('${escA(it.jargon)}')">删除</button></td>`;
+      tb.appendChild(tr);
+    });
+  } catch (e) { flash(e.message); }
+}
+async function addJargon() {
+  const j = $('jargon-new').value.trim(); if (!j) return flash('请填写黑话');
+  try {
+    await api('/groups/' + encodeURIComponent($('jargon-gid').value.trim()) + '/jargons', { method: 'POST', body: { jargon: j } });
+    flash('已添加（默认已确认）', true); $('jargon-new').value = ''; loadJargons();
+  } catch (e) { flash(e.message); }
+}
+async function confirmJargon(j) {
+  try { await api('/groups/' + encodeURIComponent($('jargon-gid').value.trim()) + '/jargons/confirm', { method: 'POST', body: { jargon: j } }); flash('已确认', true); loadJargons(); }
+  catch (e) { flash(e.message); }
+}
+async function delJargon(j) {
+  try { await api('/groups/' + encodeURIComponent($('jargon-gid').value.trim()) + '/jargons', { method: 'DELETE', body: { jargon: j } }); flash('已删除', true); loadJargons(); }
+  catch (e) { flash(e.message); }
+}
+
+// ── 成员事实 ──
+async function loadFacts() {
+  const gid = $('fact-gid').value.trim(), uid = $('fact-uid').value.trim();
+  try {
+    const d = await api('/member-facts?group_id=' + encodeURIComponent(gid) + '&user_id=' + encodeURIComponent(uid));
+    const tb = $('fact-table').querySelector('tbody'); tb.innerHTML = '';
+    (d.items || []).forEach(f => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(f)}</td><td><button class="danger" onclick="delFact('${escA(f)}')">删除</button></td>`;
+      tb.appendChild(tr);
+    });
+  } catch (e) { flash(e.message); }
+}
+async function addFact() {
+  try {
+    await api('/member-facts', { method: 'POST', body: { group_id: $('fact-gid').value.trim(), user_id: $('fact-uid').value.trim(), fact: $('fact-new').value.trim() } });
+    flash('已补记', true); $('fact-new').value = ''; loadFacts();
+  } catch (e) { flash(e.message); }
+}
+async function delFact(f) {
+  try {
+    await api('/member-facts?group_id=' + encodeURIComponent($('fact-gid').value.trim()) + '&user_id=' + encodeURIComponent($('fact-uid').value.trim()) + '&fact=' + encodeURIComponent(f), { method: 'DELETE' });
+    flash('已删除', true); loadFacts();
+  } catch (e) { flash(e.message); }
+}
+
+// ── 运行态 ──
+async function loadState() {
+  const key = $('state-key').value.trim(); if (!key) return flash('请填写会话键');
+  try { const d = await api('/sessions/' + encodeURIComponent(key) + '/state'); $('state-view').textContent = JSON.stringify(d.state ?? d, null, 2); }
+  catch (e) { flash(e.message); }
+}
+
+// ── 改密 ──
+async function changePassword() {
+  try {
+    await api('/auth/password', { method: 'PUT', body: { old_password: $('pwd-old').value, new_password: $('pwd-new').value } });
+    flash('密码已修改', true); $('pwd-old').value = ''; $('pwd-new').value = '';
+  } catch (e) { flash(e.message); }
+}
+
+// ── 工具 ──
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function escA(s) { return esc(s).replace(/'/g, "\\'"); }
+
+// 启动
+if (localStorage.getItem('plumebot_admin_token')) enterApp(localStorage.getItem('plumebot_admin_token'));
+else showAuth();
+</script>
+</body>
+</html>

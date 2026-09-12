@@ -320,10 +320,37 @@ func TestLoadMissingFileCreatesParentDir(t *testing.T) {
 	}
 }
 
+// admin 段（P7-001）解析：enabled/port/jwt_secret/token_ttl_seconds。
+func TestLoadAdminSection(t *testing.T) {
+	path := writeTempConfig(t,
+		"admin:\n"+
+			"  enabled: true\n"+
+			"  port: 9321\n"+
+			"  jwt_secret: my-secret\n"+
+			"  token_ttl_seconds: 3600\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载 admin 配置失败: %v", err)
+	}
+	if !cfg.Admin.Enabled || cfg.Admin.Port != 9321 || cfg.Admin.JWTSecret != "my-secret" || cfg.Admin.TokenTTLSeconds != 3600 {
+		t.Fatalf("admin 段解析不符: %+v", cfg.Admin)
+	}
+
+	// 缺省 admin 段 → 各零值（enabled=false 为 fail-closed 默认，消费方兜底 port/ttl）。
+	path2 := writeTempConfig(t, "bot:\n  name: x\n")
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("加载无 admin 段配置失败: %v", err)
+	}
+	if cfg2.Admin.Enabled || cfg2.Admin.Port != 0 || cfg2.Admin.JWTSecret != "" || cfg2.Admin.TokenTTLSeconds != 0 {
+		t.Fatalf("缺省 admin 段应零值: %+v", cfg2.Admin)
+	}
+}
+
 // 嵌入的默认配置应包含全部配置节（与 Config 结构对应）。
 func TestDefaultYAMLHasAllSections(t *testing.T) {
 	content := string(defaultConfigYAML)
-	for _, section := range []string{"bot:", "onebot:", "log:", "control:", "middleware:", "rate_limit:", "llm:", "models:", "chat_model:", "vision_model:", "prompt:", "native_multimodal:", "tools:", "agent:"} {
+	for _, section := range []string{"bot:", "onebot:", "log:", "control:", "middleware:", "rate_limit:", "llm:", "models:", "chat_model:", "vision_model:", "prompt:", "native_multimodal:", "tools:", "agent:", "admin:"} {
 		if !strings.Contains(content, section) {
 			t.Errorf("默认配置缺少 %q 节", section)
 		}

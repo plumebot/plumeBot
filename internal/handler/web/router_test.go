@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"plumebot/internal/handler/web/dto/response"
 	"plumebot/internal/infra/sqlite"
 	"plumebot/internal/service/admin"
+	"plumebot/internal/service/memory"
 	"plumebot/pkg/jwt"
 )
 
@@ -27,7 +29,9 @@ func newTestRouter(t *testing.T) (*gin.Engine, *jwt.Manager) {
 	}
 	t.Cleanup(func() { store.Close() })
 	mgr := jwt.NewManager("test-secret", time.Hour)
-	svc := admin.NewService(store, nil, mgr)
+	// 用真 MemoryService：群画像写/删后的缓存失效走真实链路（nil 会导致 nil 指针 panic）。
+	memSvc := memory.NewMemoryService(memory.NewWindow(), store, nil, memory.BuilderConfig{})
+	svc := admin.NewService(store, memSvc, mgr)
 	return NewRouter(svc, mgr), mgr
 }
 
@@ -216,6 +220,205 @@ func TestChangePasswordHTTP(t *testing.T) {
 	})
 	if status != http.StatusUnauthorized {
 		t.Fatalf("旧密码改后应失效, 实际 %d", status)
+	}
+}
+
+// ── 配置域端点（P7-001）──
+
+func TestResourceAuthRequired(t *testing.T) {
+	r, _ := newTestRouter(t)
+	for _, path := range []string{
+		"/api/v1/groups/configs", "/api/v1/personas", "/api/v1/groups/g1/profile",
+		"/api/v1/groups/g1/jargons", "/api/v1/member-facts", "/api/v1/sessions/g1/state",
+	} {
+		if status, _ := doJSON(t, r, http.MethodGet, path, "", nil); status != http.StatusUnauthorized {
+			t.Errorf("资源端点 %s 无 token 应 401, 实际 %d", path, status)
+		}
+	}
+}
+
+func TestGroupConfigEndpoints(t *testing.T) {
+	r, _ := newTestRouter(t)
+	token := registerAndLogin(t, r)
+
+	// 未配置群：GET 单群 → 200 + configured:false（非 404）。
+	status, env := doJSON(t, r, http.MethodGet, "/api/v1/groups/g1/config", token, nil)
+	if d, _ := env["data"].(map[string]any); status != http.StatusOK || d["configured"] != false {
+		t.Fatalf("未配置群 GET 应 200 configured:false, 实际 %d %v", status, env)
+	}
+
+	// PUT 写入 → 200（configured:true 随响应）。
+	status, _ = doJSON(t, r, http.MethodPut, "/api/v1/groups/g1/config", token, map[string]any{
+		"mode": "auto", "energy_max": 50, "group_mgmt_enabled": 1,
+		"quiet_hours_start": "", "quiet_hours_end": "",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("PUT 应 200, 实际 %d", status)
+	}
+	// 非法 mode → 400（fail-fast）。
+	status, _ = doJSON(t, r, http.MethodPut, "/api/v1/groups/g1/config", token, map[string]any{"mode": "random"})
+	if status != http.StatusBadRequest {
+		t.Fatalf("非法 mode 应 400, 实际 %d", status)
+	}
+
+	// 列表 + 单群读取。
+	status, env = doJSON(t, r, http.MethodGet, "/api/v1/groups/configs", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("列表应 200, 实际 %d", status)
+	}
+	if items := env["data"].(map[string]any)["items"].([]any); len(items) != 1 {
+		t.Fatalf("列表应含 1 项, 实际 %v", items)
+	}
+	status, env = doJSON(t, r, http.MethodGet, "/api/v1/groups/g1/config", token, nil)
+	if d, _ := env["data"].(map[string]any); status != http.StatusOK || d["configured"] != true {
+		t.Fatalf("写入后 GET 应 configured:true, 实际 %d %v", status, env)
+	}
+
+	// DELETE → 恢复未配置；再 DELETE → 404。
+	if status, _ := doJSON(t, r, http.MethodDelete, "/api/v1/groups/g1/config", token, nil); status != http.StatusOK {
+		t.Fatalf("DELETE 应 200, 实际 %d", status)
+	}
+	if status, _ := doJSON(t, r, http.MethodDelete, "/api/v1/groups/g1/config", token, nil); status != http.StatusNotFound {
+		t.Fatalf("重复 DELETE 应 404, 实际 %d", status)
+	}
+}
+
+func TestPersonaEndpoints(t *testing.T) {
+	r, _ := newTestRouter(t)
+	token := registerAndLogin(t, r)
+
+	// 不存在 agent → 404。
+	if status, _ := doJSON(t, r, http.MethodGet, "/api/v1/personas/PlumeBot", token, nil); status != http.StatusNotFound {
+		t.Fatalf("不存在人格应 404, 实际 %d", status)
+	}
+	// PUT 创建 → GET。
+	status, _ := doJSON(t, r, http.MethodPut, "/api/v1/personas/PlumeBot", token,
+		map[string]any{"name": "默认", "system_prompt": "你是赛博群友。"})
+	if status != http.StatusOK {
+		t.Fatalf("PUT 人格应 200, 实际 %d", status)
+	}
+	status, env := doJSON(t, r, http.MethodGet, "/api/v1/personas/PlumeBot", token, nil)
+	if d, _ := env["data"].(map[string]any); status != http.StatusOK || d["agent"] != "PlumeBot" {
+		t.Fatalf("GET 人格不符: %d %v", status, env)
+	}
+	// 列表。
+	status, env = doJSON(t, r, http.MethodGet, "/api/v1/personas", token, nil)
+	if items := env["data"].(map[string]any)["items"].([]any); status != http.StatusOK || len(items) != 1 {
+		t.Fatalf("人格列表应 1 项: %d %v", status, env)
+	}
+	// 空 system_prompt → 400。
+	if status, _ := doJSON(t, r, http.MethodPut, "/api/v1/personas/x", token, map[string]any{"name": "", "system_prompt": ""}); status != http.StatusBadRequest {
+		t.Fatalf("空 system_prompt 应 400, 实际 %d", status)
+	}
+}
+
+func TestGroupProfileEndpoints(t *testing.T) {
+	r, _ := newTestRouter(t)
+	token := registerAndLogin(t, r)
+
+	// 无画像 → 200 + configured:false。
+	status, env := doJSON(t, r, http.MethodGet, "/api/v1/groups/g1/profile", token, nil)
+	if d, _ := env["data"].(map[string]any); status != http.StatusOK || d["configured"] != false {
+		t.Fatalf("无画像 GET 应 configured:false, 实际 %d %v", status, env)
+	}
+	// PUT 写 → GET roundtrip。
+	status, _ = doJSON(t, r, http.MethodPut, "/api/v1/groups/g1/profile", token, map[string]any{
+		"culture": "认真", "topics": []string{"Go", "Bot"}, "active_hours": "晚上",
+		"rules": []string{}, "atmosphere": []string{"友好"},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("PUT 画像应 200, 实际 %d", status)
+	}
+	status, env = doJSON(t, r, http.MethodGet, "/api/v1/groups/g1/profile", token, nil)
+	d := env["data"].(map[string]any)
+	if status != http.StatusOK || d["configured"] != true || d["culture"] != "认真" {
+		t.Fatalf("画像内容不符: %d %v", status, d)
+	}
+	// DELETE → 无画像；再 DELETE → 404。
+	if status, _ := doJSON(t, r, http.MethodDelete, "/api/v1/groups/g1/profile", token, nil); status != http.StatusOK {
+		t.Fatalf("DELETE 画像应 200, 实际 %d", status)
+	}
+	if status, _ := doJSON(t, r, http.MethodDelete, "/api/v1/groups/g1/profile", token, nil); status != http.StatusNotFound {
+		t.Fatalf("重复 DELETE 画像应 404, 实际 %d", status)
+	}
+}
+
+func TestJargonEndpoints(t *testing.T) {
+	r, _ := newTestRouter(t)
+	token := registerAndLogin(t, r)
+
+	// 添加默认 confirmed → 列表。
+	if status, _ := doJSON(t, r, http.MethodPost, "/api/v1/groups/g1/jargons", token, map[string]any{"jargon": "yyds"}); status != http.StatusOK {
+		t.Fatalf("POST 黑话应 200, 实际 %d", status)
+	}
+	status, env := doJSON(t, r, http.MethodGet, "/api/v1/groups/g1/jargons?status=all", token, nil)
+	items := env["data"].(map[string]any)["items"].([]any)
+	if status != http.StatusOK || len(items) != 1 {
+		t.Fatalf("黑话列表应 1 项: %d %v", status, env)
+	}
+	if it := items[0].(map[string]any); it["status"] != "confirmed" {
+		t.Fatalf("管理面添加应默认 confirmed, 实际: %v", it)
+	}
+	// status 过滤。
+	status, env = doJSON(t, r, http.MethodGet, "/api/v1/groups/g1/jargons?status=pending", token, nil)
+	if items := env["data"].(map[string]any)["items"].([]any); status != http.StatusOK || len(items) != 0 {
+		t.Fatalf("pending 过滤应空: %d %v", status, env)
+	}
+	// 重复添加视为成功（幂等）。
+	if status, _ := doJSON(t, r, http.MethodPost, "/api/v1/groups/g1/jargons", token, map[string]any{"jargon": "yyds"}); status != http.StatusOK {
+		t.Fatalf("重复添加应视为成功, 实际 %d", status)
+	}
+	// 删除 → 再删 → 404。
+	if status, _ := doJSON(t, r, http.MethodDelete, "/api/v1/groups/g1/jargons", token, map[string]any{"jargon": "yyds"}); status != http.StatusOK {
+		t.Fatalf("DELETE 黑话应 200, 实际 %d", status)
+	}
+	if status, _ := doJSON(t, r, http.MethodDelete, "/api/v1/groups/g1/jargons", token, map[string]any{"jargon": "yyds"}); status != http.StatusNotFound {
+		t.Fatalf("重复 DELETE 黑话应 404, 实际 %d", status)
+	}
+}
+
+func TestMemberFactEndpoints(t *testing.T) {
+	r, _ := newTestRouter(t)
+	token := registerAndLogin(t, r)
+
+	// user_id 空 → 400。
+	if status, _ := doJSON(t, r, http.MethodPost, "/api/v1/member-facts", token, map[string]any{"group_id": "g1", "user_id": "", "fact": "喜欢猫"}); status != http.StatusBadRequest {
+		t.Fatalf("空 user_id 应 400, 实际 %d", status)
+	}
+	// 补记 → 列表。
+	if status, _ := doJSON(t, r, http.MethodPost, "/api/v1/member-facts", token, map[string]any{"group_id": "g1", "user_id": "u1", "fact": "喜欢猫"}); status != http.StatusOK {
+		t.Fatalf("POST 事实应 200, 实际 %d", status)
+	}
+	status, env := doJSON(t, r, http.MethodGet, "/api/v1/member-facts?group_id=g1&user_id=u1", token, nil)
+	items := env["data"].(map[string]any)["items"].([]any)
+	if status != http.StatusOK || len(items) != 1 || items[0] != "喜欢猫" {
+		t.Fatalf("事实列表应 1 项: %d %v", status, env)
+	}
+	// 删除 → 再删 → 404。
+	if status, _ := doJSON(t, r, http.MethodDelete, "/api/v1/member-facts?group_id=g1&user_id=u1&fact=%E5%96%9C%E6%AC%A2%E7%8C%AB", token, nil); status != http.StatusOK {
+		t.Fatalf("DELETE 事实应 200, 实际 %d", status)
+	}
+	if status, _ := doJSON(t, r, http.MethodDelete, "/api/v1/member-facts?group_id=g1&user_id=u1&fact=%E5%96%9C%E6%AC%A2%E7%8C%AB", token, nil); status != http.StatusNotFound {
+		t.Fatalf("重复 DELETE 事实应 404, 实际 %d", status)
+	}
+}
+
+func TestStateEndpointNotFound(t *testing.T) {
+	r, _ := newTestRouter(t)
+	token := registerAndLogin(t, r)
+	// 运行态只读：无数据时 404，路由可达。
+	if status, _ := doJSON(t, r, http.MethodGet, "/api/v1/sessions/g-none/state", token, nil); status != http.StatusNotFound {
+		t.Fatalf("无运行态应 404, 实际 %d", status)
+	}
+}
+
+func TestServeIndexPage(t *testing.T) {
+	r, _ := newTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "PlumeBot 管理") {
+		t.Fatalf("首页应 200 且包含标题, 实际 %d", w.Code)
 	}
 }
 
