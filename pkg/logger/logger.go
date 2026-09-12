@@ -108,28 +108,46 @@ func L() *zap.Logger {
 	return zl
 }
 
+// 各级别日志方法在全局 logger 未初始化（zl == nil，如组件单测）时安全丢弃，
+// 不 panic；生产路径 main 后 Init 行为不变。Fatal 兜底直接退出保证语义。
+
 // Debug 输出 debug 级别日志。
 func Debug(msg string, fields ...zap.Field) {
+	if zl == nil {
+		return
+	}
 	zl.Debug(msg, fields...)
 }
 
 // Info 输出 info 级别日志。
 func Info(msg string, fields ...zap.Field) {
+	if zl == nil {
+		return
+	}
 	zl.Info(msg, fields...)
 }
 
 // Warn 输出 warn 级别日志。
 func Warn(msg string, fields ...zap.Field) {
+	if zl == nil {
+		return
+	}
 	zl.Warn(msg, fields...)
 }
 
 // Error 输出 error 级别日志。
 func Error(msg string, fields ...zap.Field) {
+	if zl == nil {
+		return
+	}
 	zl.Error(msg, fields...)
 }
 
 // Fatal 输出 fatal 级别日志后调用 os.Exit(1)。
 func Fatal(msg string, fields ...zap.Field) {
+	if zl == nil {
+		os.Exit(1)
+	}
 	zl.Fatal(msg, fields...)
 }
 
