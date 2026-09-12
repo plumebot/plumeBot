@@ -86,6 +86,12 @@ func (s *MemoryService) GetGroupProfile(groupID string) (*entity.GroupProfile, b
 	return s.profiles.GetGroupProfile(groupID)
 }
 
+// InvalidateGroupProfile 清除指定群画像的内存缓存（P7-001 管理面写/删后调用，
+// 否则 prompt 仍走旧画像；下一条群消息触达自动重新加载）。
+func (s *MemoryService) InvalidateGroupProfile(groupID string) {
+	s.profiles.Invalidate(groupID)
+}
+
 // Compress 触发一次该会话的异步窗口压缩（窗口满时由事件层消费 full 信号调用）。
 // 具体流程见 Compressor：一级压缩 → 热链 → 二级融合/淘汰 → 裁剪窗口。
 func (s *MemoryService) Compress(ctx context.Context, msg entity.Message) {

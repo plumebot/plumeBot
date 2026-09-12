@@ -53,6 +53,14 @@ func (p *ProfileCache) GetGroupProfile(groupID string) (*entity.GroupProfile, bo
 	return prof, ok
 }
 
+// Invalidate 删除指定群的缓存条目（含「已确认无画像」的 nil 占位）。
+// P7-001 管理面写/删 group_profile 后调用，下一条群消息触达时重新加载。
+func (p *ProfileCache) Invalidate(groupID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.groups, groupID)
+}
+
 // loadGroupProfile 查询群画像；确认无画像（ErrNotFound）返回 nil 并标记可缓存。
 // 查询失败（非 ErrNotFound）不缓存，返回 cached=false 以便下条消息重试。
 func (p *ProfileCache) loadGroupProfile(ctx context.Context, groupID string) (*entity.GroupProfile, bool) {
