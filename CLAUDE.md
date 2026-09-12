@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第六阶段：联调验收（P6-001 Prompt 组装、P6-002 完整消息链路已完结，P6-003 待实现） |
+| 当前阶段 | 第七阶段：管理后端（P7-001 管理配置 API 已完结；第六阶段 P6-003 端到端压测待实现） |
 | 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B 台账，完成即删行） |
 
 ```bash
@@ -24,7 +24,7 @@ go build ./...
 # 静态分析
 go vet ./...
 
-# 测试（已有多包单测：service/event、service/memory、service/agent、service/control、service/plugin、infra/onebot、infra/ai、infra/ai/tools、infra/imagecache、infra/sqlite、pkg/config、pkg/ahocorasick、pkg/base64util、plugin-sdk（独立 module：entity + plugin））
+# 测试（已有多包单测：service/event、service/memory、service/agent、service/control、service/plugin、service/admin、infra/onebot、infra/ai、infra/ai/tools、infra/imagecache、infra/sqlite、handler/web、pkg/config、pkg/jwt、pkg/ahocorasick、pkg/base64util、plugin-sdk（独立 module：entity + plugin））
 go test ./...
 
 # 运行（连接 NapCat，需先配置 config.yaml 的 onebot.ws_url；缺失配置会自动写入默认模板）
@@ -75,7 +75,7 @@ PlumeBot
 当前阶段：
 
 ```text
-第六阶段：联调验收
+第七阶段：管理后端
 ```
 
 本阶段目标：
@@ -132,6 +132,15 @@ entity.GroupAction) 统一入口，与 Sender 分离）+ per-event ctx 注入（
 默认 1 开，无配置行同样视为开，0 = 显式关闭）+ 触发者/bot 管理员校验（get_group_member_info 查
 role，fail-closed）+ mute 时长钳制 30 天；动作经 ctx.CallAction 检查 APIResponse 反馈（SetGroupBan 等封装吞响应不可用）；
 migrate() 升级为版本记录式（schema_migrations 表 + 逐文件事务，B-034 版本化迁移基础设施顺带建立）。
+已完成：P7-001 管理配置 API（roadmap 第七阶段，设计见 docs/admin-web-api-plan.md）：
+gin 管理后端（127.0.0.1 回环绑定；admin.port 默认 9321 起、被占用逐次 +1 至 10024，全占用仅告警）
+= pkg/jwt（golang-jwt/v5 HS256 纯封装）+ service/admin（单 service 按配置域分组：group_config /
+persona / group_profile / group_jargon / member_facts / bot_state 只读）+ handler/web（单一包
+按职责域拆 Handler 对象，dto/request 与 dto/response 分层，middleware/response helper 同包）
++ 简易前端单页（go:embed，原生 fetch）；鉴权：admin_user 表（003 迁移）+ 首次注册门控
+（空表可用，其后 4031）+ bcrypt 散列 + 注册/登录每 IP 限流；group_profile 写/删后经
+MemoryService.InvalidateGroupProfile 失效内存缓存（D9）；管理面 fail-fast 校验；
+config 新增 admin 段（enabled / port / jwt_secret / token_ttl_seconds，双处同步 B-006）。
 ```
 
 禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：

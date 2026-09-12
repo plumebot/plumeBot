@@ -14,7 +14,7 @@
 | 第四阶段 | 人格与插件 | 人格模板化 + 子进程插件加载 | ✅ |
 | 第五阶段 | 触发控制 | mention/auto 模式 + 状态规则 | ✅ |
 | 第六阶段 | 联调验收 | 完整消息链路跑通，bot 可对话 | 🔄（P6-001 ✅，P6-002 ✅，P6-003 待实现） |
-| 第七阶段 | 管理后端 | 配置管理 Web 后端 + 简易前端页 | 🔄（P7-001 实现中） |
+| 第七阶段 | 管理后端 | 配置管理 Web 后端 + 简易前端页 | ✅（P7-001 已完成） |
 
 ---
 
@@ -119,7 +119,7 @@
 
 | 任务编号 | 任务名 | 内容 | 优先级 | 涉及模块 | 启动条件 | 验收标准 | 状态 |
 |---|---------|------|:---:|------|------|------|:--:|
-| P7-001 | 管理配置 API（gin + golang-jwt + service/admin + pkg/jwt + 简易前端页） | 落地计划书 §4～§10 全部设计，实现路径（一次一个子任务）：① `003_admin_user.sql` + Storage/entity 扩展 + sqlite 实现；② `pkg/jwt` + `handler/web` auth 中间件 + 注册/登录/改密流（含首账号注册门控）；③ `service/admin` 各配置域读写 + 群画像缓存失效 + fail-fast 校验；④ `handler/web` 路由 + 单页前端 + `admin` 段 config + main 注入（端口 9321~10024 被占用逐次 +1）；⑤ 测试补全 | P0 | handler/web + service/admin + pkg/jwt + domain + infra/sqlite + pkg/config + cmd/bot | 第六阶段完成 | `admin.enabled=true` 时浏览器可访问首页 → 无账号先注册、已有账号注册被拒 → 登录 → 群配置/人格/群画像（缓存失效断言）/黑话/成员事实/运行态读写与只读生效、端口递增、改密生效、鉴权拦截、单测全绿 | 🔄 |
+| P7-001 | 管理配置 API（gin + golang-jwt + service/admin + pkg/jwt + 简易前端页） | 落地计划书 §4～§10 全部设计，实现路径（一次一个子任务）：① `003_admin_user.sql` + Storage/entity 扩展 + sqlite 实现；② `pkg/jwt` + `handler/web` auth 中间件 + 注册/登录/改密流（含首账号注册门控）；③ `service/admin` 各配置域读写 + 群画像缓存失效 + fail-fast 校验；④ `handler/web` 路由 + 单页前端 + `admin` 段 config + main 注入（端口 9321~10024 被占用逐次 +1）；⑤ 测试补全 | P0 | handler/web + service/admin + pkg/jwt + domain + infra/sqlite + pkg/config + cmd/bot | 第六阶段完成 | `admin.enabled=true` 时浏览器可访问首页 → 无账号先注册、已有账号注册被拒 → 登录 → 群配置/人格/群画像（缓存失效断言）/黑话/成员事实/运行态读写与只读生效、端口递增、改密生效、鉴权拦截、单测全绿 | ✅ |
 
 ---
 
