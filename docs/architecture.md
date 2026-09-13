@@ -314,6 +314,13 @@ bot 在每个群维护独立状态，纯规则驱动：
 **参数来源**（优先级）：
 per-group `group_config` 列（非 0/非空）→ 全局 `cfg.Control.state` → 代码默认常量（service/control）。
 
+**自动建行**：群首次被 bot 触达（`ControlService.resolveParams` 遇 `GetGroupConfig` 返回 `ErrNotFound`）时，
+按**当前全局生效值**快照落一行（`defaultGroupConfig`；私聊不建行，写库失败仅告警不阻断回复链路）。
+落库三处刻意处理：`mode` 写归一化后的枚举（管理面校验只接受 `mention`/`auto`）、静默时段由内部分钟数还原
+为 `"HH:MM"`、`group_mgmt_enabled` 固定写 1（显式开关，留零值会静默关掉该群群管理）。
+后果：快照值与「走全局」等价（读取行为不变），但该行此后**独立于全局**——`cfg.Control` 变更不再影响该群；
+管理面 DELETE 删行后，该群下一条消息会按当时的全局值重新建行（非持久）。
+
 | 参数 | 全局默认 | 说明 |
 |------|---------|------|
 | `energy_max` | 100 | 精力上限 |
@@ -402,7 +409,7 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 | member_facts | 成员事实记忆（1人N条；group_id 空=私聊，非空=群聊） |
 | persona | 人格模板（agent 绑定，见 §7） |
 | bot_state | bot 在各会话的运行态（群=group_id，私聊=`private:`+user_id，P5-002） |
-| group_config | 群静态配置（mode + 状态规则参数 10 列 + 群管理开关，P5-001/002/B-015） |
+| group_config | 群静态配置（mode + 状态规则参数 10 列 + 群管理开关，P5-001/002/B-015；群首次被触达自动建行，见 §9.2） |
 | schema_migrations | 迁移版本记录（version PK，B-015 起 migrate 为版本记录式） |
 
 > 说明：共 9 张表（7 张业务表 + conversation_summary 归档摘要表 + schema_migrations 迁移版本表）。
@@ -412,6 +419,8 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 > 状态参数列（energy_*/cooldown_*/consecutive_*/rest_*/quiet_hours_*/short_message_chars），
 > 0/空 = 走全局 cfg.Control.state 兜底；B-015 扩 `group_mgmt_enabled`（群管理单一开关，
 > 默认 1 开；无配置行同样视为开，0 = 显式关闭，与「0=走全局」语义不同，为显式开关）。
+> P7-001 补充：群首次被 bot 触达时按全局生效值**自动建行**（快照），故实际行多为非 0/非空值，
+> 「0/空 = 走全局」仍成立但不再常见（建行细节与管理面语义见 §9.2 与 admin-web-api-plan.md §7.2）。
 > schema_migrations 自 B-015 起：migrate() 每迁移文件在单事务内执行一次并记录版本，
 > 失败整体回滚不记版本（下次启动重试）——新增列一律新建 `00N_*.sql`，不再改动 001
 > （SQLite 无 `ADD COLUMN IF NOT EXISTS`，幂等依赖版本记录，见 §15）。

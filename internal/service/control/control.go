@@ -12,6 +12,7 @@ import (
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/config"
+	"plumebot/pkg/logger"
 )
 
 // 触发模式合法值（service 侧唯一；空/未知在归一化时兜底 mention，B-005）。
@@ -178,11 +179,44 @@ func (s *ControlService) resolveParams(ctx context.Context, groupID string) (str
 		}
 		return normalizeMode(mode), mergeOverrides(s.defaults, *gc), nil
 	case errors.Is(err, domain.ErrNotFound):
-		// 无 per-group 配置 → 落全局
+		// 群首次出现：快照当前全局生效值落一行（方案 A），供管理面编排与后续 per-group 微调。
+		// 建行是管理面副作用，失败不阻断判定——回复链路不应因配置行写入失败而中断，仅告警。
+		if uerr := s.store.UpsertGroupConfig(ctx, s.defaultGroupConfig(groupID)); uerr != nil {
+			logger.Warn("群配置自动建行失败", logger.S("group_id", groupID), logger.Err(uerr))
+		}
 		return normalizeMode(s.defaultMode), s.defaults, nil
 	default:
 		return "", ruleConfig{}, err
 	}
+}
+
+// defaultGroupConfig 快照当前全局生效值，构造新群首次出现时的初始配置行（方案 A）。
+// mode 写归一化后的生效值（mention/auto）而非原始 s.defaultMode：管理面
+// validateGroupConfig 只接受这两个枚举，存空串会让该行在管理面回写时报 400。
+// 状态参数取合并后的生效值 s.defaults；group_mgmt_enabled 固定写 1——该列是显式开关
+// （0 = 显式关闭），自动建行若留零值会静默关掉该群群管理（见 entity.GroupConfig 注释）。
+func (s *ControlService) defaultGroupConfig(groupID string) entity.GroupConfig {
+	return entity.GroupConfig{
+		GroupID:           groupID,
+		Mode:              normalizeMode(s.defaultMode),
+		EnergyMax:         s.defaults.energyMax,
+		EnergyCost:        s.defaults.energyCost,
+		EnergyRecover:     s.defaults.energyRecover,
+		EnergyThreshold:   s.defaults.energyThreshold,
+		CooldownSeconds:   int(s.defaults.cooldownSeconds),
+		ConsecutiveLimit:  s.defaults.consecutiveLimit,
+		RestSeconds:       int(s.defaults.restSeconds),
+		QuietHoursStart:   formatHM(s.defaults.quietHoursStart),
+		QuietHoursEnd:     formatHM(s.defaults.quietHoursEnd),
+		ShortMessageChars: s.defaults.shortMessageChars,
+		GroupMgmtEnabled:  1,
+	}
+}
+
+// formatHM 将当日分钟数（0-1439）格式化为 "HH:MM"，用于把默认静默时段快照进 group_config。
+func formatHM(minute int) string {
+	minute = ((minute % 1440) + 1440) % 1440
+	return fmt.Sprintf("%02d:%02d", minute/60, minute%60)
 }
 
 // normalizeMode 归一化模式：仅 "auto" 为 auto；空/未知 → mention（fail-closed，B-005）。

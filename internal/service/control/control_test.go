@@ -16,17 +16,20 @@ import (
 // noon 是固定测试基准时刻（12:00，位于默认静默时段 23:00-07:00 之外）。
 var noon = time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
 
-// fakeStore 嵌入 domain.Storage，覆写 GetGroupConfig / GetBotState / UpsertBotState。
-// cfgs 中缺失的群 → ErrNotFound；getErr 模拟 GetGroupConfig 故障；
-// getStateErr / setStateErr 模拟 bot_state 读/写故障。states 访问带锁（并发测试安全）。
+// fakeStore 嵌入 domain.Storage，覆写 GetGroupConfig / UpsertGroupConfig / GetBotState / UpsertBotState。
+// cfgs 中缺失的群 → ErrNotFound（触发自动建行）；getErr 模拟 GetGroupConfig 故障；
+// setConfigErr 模拟自动建行写库故障；getStateErr / setStateErr 模拟 bot_state 读/写故障。
+// states 访问带锁（并发测试安全）；upserts 记录自动建行落库的快照供断言。
 type fakeStore struct {
 	domain.Storage
-	mu          sync.Mutex
-	cfgs        map[string]*entity.GroupConfig
-	states      map[string]*entity.BotState
-	getErr      error
-	getStateErr error
-	setStateErr error
+	mu           sync.Mutex
+	cfgs         map[string]*entity.GroupConfig
+	states       map[string]*entity.BotState
+	upserts      map[string]entity.GroupConfig
+	getErr       error
+	setConfigErr error
+	getStateErr  error
+	setStateErr  error
 }
 
 func (f *fakeStore) GetGroupConfig(_ context.Context, groupID string) (*entity.GroupConfig, error) {
@@ -37,6 +40,19 @@ func (f *fakeStore) GetGroupConfig(_ context.Context, groupID string) (*entity.G
 		return c, nil
 	}
 	return nil, domain.ErrNotFound
+}
+
+func (f *fakeStore) UpsertGroupConfig(_ context.Context, cfg entity.GroupConfig) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.setConfigErr != nil {
+		return f.setConfigErr
+	}
+	if f.upserts == nil {
+		f.upserts = map[string]entity.GroupConfig{}
+	}
+	f.upserts[cfg.GroupID] = cfg
+	return nil
 }
 
 func (f *fakeStore) GetBotState(_ context.Context, groupID string) (*entity.BotState, error) {
@@ -169,6 +185,68 @@ func TestShouldReplyStoreError(t *testing.T) {
 	_, err := svc.ShouldReply(context.Background(), groupMsg(false))
 	if err == nil {
 		t.Fatal("GetGroupConfig 故障时应返回 error")
+	}
+}
+
+// TestGroupConfigAutoCreated 新群首次出现（无配置行）→ 快照全局生效值自动落一行（方案 A）。
+func TestGroupConfigAutoCreated(t *testing.T) {
+	st := &fakeStore{}
+	svc, _ := newTest(config.ControlConfig{Mode: "auto"}, st)
+
+	if _, err := svc.ShouldReply(context.Background(), groupMsg(false)); err != nil {
+		t.Fatalf("ShouldReply 报错: %v", err)
+	}
+
+	got, ok := st.upserts["g1"]
+	if !ok {
+		t.Fatal("新群首次判定应自动建行")
+	}
+	if got.Mode != ModeAuto {
+		t.Errorf("Mode = %q, want %q（应写归一化后的生效模式）", got.Mode, ModeAuto)
+	}
+	if got.GroupMgmtEnabled != 1 {
+		t.Errorf("GroupMgmtEnabled = %d, want 1（0 = 显式关闭群管理）", got.GroupMgmtEnabled)
+	}
+	if got.EnergyMax != config.DefaultEnergyMax || got.CooldownSeconds != config.DefaultCooldownSeconds {
+		t.Errorf("状态参数应为全局生效值快照, got %+v", got)
+	}
+	if got.QuietHoursStart != config.DefaultQuietHoursStart || got.QuietHoursEnd != config.DefaultQuietHoursEnd {
+		t.Errorf("静默时段 = %q-%q, want %q-%q", got.QuietHoursStart, got.QuietHoursEnd,
+			config.DefaultQuietHoursStart, config.DefaultQuietHoursEnd)
+	}
+}
+
+// TestGroupConfigAutoCreateSkipAndFailure 已有配置行/私聊不建行；建行写库失败仅告警不阻断判定。
+func TestGroupConfigAutoCreateSkipAndFailure(t *testing.T) {
+	// 已有配置行：不重复建行。
+	existing := &fakeStore{cfgs: map[string]*entity.GroupConfig{"g1": {GroupID: "g1", Mode: "auto"}}}
+	svc, _ := newTest(config.ControlConfig{Mode: "auto"}, existing)
+	if _, err := svc.ShouldReply(context.Background(), groupMsg(false)); err != nil {
+		t.Fatalf("ShouldReply 报错: %v", err)
+	}
+	if len(existing.upserts) != 0 {
+		t.Errorf("已有配置行不应重复建行, got %v", existing.upserts)
+	}
+
+	// 私聊无 per-group 概念：不建行。
+	priv := &fakeStore{}
+	svcPriv, _ := newTest(config.ControlConfig{Mode: "auto"}, priv)
+	if _, err := svcPriv.ShouldReply(context.Background(), privateMsg()); err != nil {
+		t.Fatalf("私聊 ShouldReply 报错: %v", err)
+	}
+	if len(priv.upserts) != 0 {
+		t.Errorf("私聊不应建行, got %v", priv.upserts)
+	}
+
+	// 建行写库失败：仅告警，判定照常按全局配置返回。
+	failing := &fakeStore{setConfigErr: errors.New("write db down")}
+	svcFail, _ := newTest(config.ControlConfig{Mode: "auto"}, failing)
+	got, err := svcFail.ShouldReply(context.Background(), groupMsg(false))
+	if err != nil {
+		t.Fatalf("建行失败不应阻断判定: %v", err)
+	}
+	if !got.Reply {
+		t.Errorf("建行失败仍应按全局配置放行, got %+v", got)
 	}
 }
 

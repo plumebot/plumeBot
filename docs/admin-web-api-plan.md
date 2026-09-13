@@ -1,7 +1,7 @@
 # PlumeBot 管理后端（gin + JWT + 简易前端）配置管理 API 计划书
 
 > 状态：**计划书（已评审定案，未实现）**
-> 日期：2026-09-12（首版）；2026-09-12（评审修订：K2 定案一次）
+> 日期：2026-09-12（首版）；2026-09-12（评审修订：K2 定案一次）；2026-09-13（补充修订：`group_config` 自动建行，见 §7.2）
 > 关联文档：architecture.md §16（web 健康检查 /ping）、roadmap.md（B 台账）、CLAUDE.md 分层规则
 > 本文档只做**接口与架构设计**，不含代码实现。遗留小决策见 §12「待讨论问题」。
 
@@ -29,7 +29,7 @@
 
 | 表 | 字段摘要 | 运行时消费方 | 生效机制 | 是否管理面可改 |
 |----|----------|--------------|----------|:---:|
-| `group_config` | `mode` + 10 状态规则参数 + `group_mgmt_enabled` | `service/control.ShouldReply` 每条非 @ 群消息现查 `GetGroupConfig`（**无缓存**，B-036 定案） | **改库即时生效** | ✅ 核心 |
+| `group_config` | `mode` + 10 状态规则参数 + `group_mgmt_enabled` | `service/control.ShouldReply` 每条非 @ 群消息现查 `GetGroupConfig`（**无缓存**，B-036 定案）；群首次被触达时由 `resolveParams` 自动落一行默认配置（快照全局生效值，见 §7.2） | **改库即时生效** | ✅ 核心 |
 | `persona` | `agent`(UNIQUE) + `name` + `system_prompt` | `service/memory.BuildMessages` 每次组装现查 `GetPersonaByAgent` | **改库即时生效**（P6-001） | ✅ 核心 |
 | `group_profile` | `culture/topics/active_hours/rules/atmosphere` | `BuildMessages` 经 `memory.GetGroupProfile` | 走 `ProfileCache` 内存缓存，**无淘汰/失效出口**（`service/memory/profile.go` 只增不删，B-004） | ✅ 但需**缓存失效** |
 | `group_jargon` | `group_id + jargon + status(pending/confirmed)` | `BuildMessages` 现查 `ListConfirmedJargon` | confirmed 变更**即时生效**；pending 不注入 prompt | ✅ 需审核/删除 |
@@ -56,6 +56,8 @@
 - **`group_profile` 有缓存且无失效出口** → 管理面修改/删除后**必须**调 `MemoryService.InvalidateGroupProfile(groupID)`
   新方法删除 `ProfileCache.groups` 条目，否则 prompt 仍走旧画像（详见 §7.4）；
 - `group_config` 语义：列值 **0/空 = 不覆盖、走全局**（`mergeOverrides`）；`group_mgmt_enabled` 为**显式开关**（默认 1 开，0=关）。
+  **自动建行**：群首次被 bot 触达时自动落一行「全局生效值快照」，故实际存在的行绝大多数列值非 0/非空
+  ——「0/空 = 走全局」仍成立，只是自动建行后不再常见（详见 §7.2 说明）。
 
 ---
 
@@ -234,14 +236,33 @@ CREATE TABLE IF NOT EXISTS admin_user (
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
 |------|------|------|------|------|
-| GET | `/api/v1/groups/{group_id}/config` | — | 单群配置 + `"configured": bool` | 未配置行返回 **200 + 全零/空字段 + `configured:false`**（不返回 404，前端可直接编排「走全局」态） |
+| GET | `/api/v1/groups/{group_id}/config` | — | 单群配置 + `"configured": bool` | 未配置行返回 **200 + 全零/空字段 + `configured:false`**（不返回 404）。经 bot 触达过的群已有自动建行 → `configured:true`；`false` 仅表示**该群尚未被 bot 触达** |
 | PUT | `/api/v1/groups/{group_id}/config` | 全字段 `GroupConfig` JSON | 更新后的配置 | **整行 upsert**（幂等）；0/空列=走全局；`configured` 恒 true |
-| DELETE | `/api/v1/groups/{group_id}/config` | — | — | 删行 → 恢复全局兜底（不存在 4041） |
-| GET | `/api/v1/groups/configs` | — | `{"items":[...]}` | 所有已配置群列表（未配置群不出现） |
+| DELETE | `/api/v1/groups/{group_id}/config` | — | — | 删行 → 恢复全局兜底（不存在 4041）；**该群下次被 bot 触达时会按当时的全局生效值重新自动建行**（见下方说明，非持久） |
+| GET | `/api/v1/groups/configs` | — | `{"items":[...]}` | 所有已配置群列表，**含自动建行的群**；未配置群在首次被 bot 触达前不出现 |
 
 校验（service/admin）：`mode ∈ {mention, auto}`（拒绝空/未知 → 400；**与运行期 normalizeMode 的 fail-closed 兜底不同**）；
 `group_mgmt_enabled ∈ {0,1}`；各 int 参数 `>=0`；`quiet_hours_start/end` 严格 `HH:MM`（`time.Parse("15:04")`，非法 → 400；
 允许相等 = 空段禁用）。
+
+**自动建行（2026-09-13 补充定案）**：`service/control.resolveParams` 在 `GetGroupConfig` 返回 `ErrNotFound`
+时，按**当前全局生效值**快照落一行（`ControlService.defaultGroupConfig`）。触发时机 = 该群首条走到触发判断的
+消息（`ShouldReply`），或首次回复记账（`OnReplied`）；**私聊不建行**。落库字段刻意有三处处理：
+
+- `mode` 写**归一化后的生效值**（`mention`/`auto`）而非原始 `cfg.Control.Mode`——本接口校验只接受这两个枚举，
+  存空串会让该行在此处回写时报 400；
+- 10 个状态参数取合并后的全局生效值；`quiet_hours_*` 由内部分钟数还原为 `"HH:MM"`；
+- `group_mgmt_enabled` **固定写 1**——该列是显式开关（0 = 显式关闭），自动建行留零值会静默关掉该群群管理。
+
+建行写库失败**仅告警、不阻断**回复链路（管理面副作用）。
+
+由此产生的语义影响：
+
+1. 快照值 = 建行时的全局生效值，`mergeOverrides` 覆盖后与原「走全局」**等价**，读取链路行为不变；
+2. 但该行此后**独立于全局**：`config.yaml` 的 `control.mode` / `control.state` 变更不再影响该群，需在该群行上改；
+3. `configured:false`（前端「走全局」态）只在该群**尚未被 bot 触达**时可达；
+4. DELETE 是**非持久**的——删行后下一条群消息会重新建行（内容为当时的全局值）。「永久回到走全局」当前无对应操作，
+   列入 roadmap B 台账遗留项。
 
 ### 7.3 `persona` — 人格模板（改即生效）
 
@@ -257,7 +278,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
 |------|------|------|------|------|
-| GET | `/api/v1/groups/{group_id}/profile` | — | 单群画像 | 无画像返回零值 + `configured:false`（同 7.2 语义） |
+| GET | `/api/v1/groups/{group_id}/profile` | — | 单群画像 | 无画像返回零值 + `configured:false`（形态同 7.2；但 **profile 不自动建行**，故该态长期可达，不受 §7.2 自动建行影响） |
 | PUT | `/api/v1/groups/{group_id}/profile` | `{"culture","topics":[],"active_hours","rules":[],"atmosphere":[]}` | 更新后画像 | UpsertGroupProfile **后调 `MemoryService.InvalidateGroupProfile(groupID)`** |
 | DELETE | `/api/v1/groups/{group_id}/profile` | — | — | **定案 F：做**。`DeleteGroupProfile` + **同样失效缓存**（不存在 4041） |
 

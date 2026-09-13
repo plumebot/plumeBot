@@ -12,7 +12,8 @@ type Items[T any] struct {
 }
 
 // GroupConfig 单群配置响应：嵌入含 json tag 的 entity.GroupConfig，
-// 附加 configured（false = 未配置行，走全局兜底，前端可直接编排；HTTP 仍 200）。
+// 附加 configured（false = 无配置行——该群尚未被 bot 触达，走全局兜底；HTTP 仍 200）。
+// 群首次被触达时 service/control 会自动建行（admin-web-api-plan.md §7.2），故 false 已少见。
 type GroupConfig struct {
 	entity.GroupConfig
 	Configured bool `json:"configured"`

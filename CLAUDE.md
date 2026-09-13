@@ -141,6 +141,12 @@ persona / group_profile / group_jargon / member_facts / bot_state 只读）+ han
 （空表可用，其后 4031）+ bcrypt 散列 + 注册/登录每 IP 限流；group_profile 写/删后经
 MemoryService.InvalidateGroupProfile 失效内存缓存（D9）；管理面 fail-fast 校验；
 config 新增 admin 段（enabled / port / jwt_secret / token_ttl_seconds，双处同步 B-006）。
+另：**group_config 自动建行**（P7-001 补充）——群首次被 bot 触达（`service/control.resolveParams`
+遇 `GetGroupConfig` 返回 `ErrNotFound`）时，按**当时全局生效值**快照落一行
+（`ControlService.defaultGroupConfig`；私聊不建行；`mode` 写归一化枚举、静默时段还原 `"HH:MM"`、
+`group_mgmt_enabled` 固定写 1，写库失败仅告警不阻断回复链路）。后果：该群此后**独立于全局**
+（`cfg.Control` 变更不再影响它）；管理面 DELETE 删行**非持久**（下条群消息按当时全局值重建）；
+`configured:false` 仅对该群**尚未被触达**时可达。见 `docs/admin-web-api-plan.md` §7.2 与架构 §9.2。
 ```
 
 禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：

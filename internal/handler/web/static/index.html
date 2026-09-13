@@ -237,8 +237,8 @@ async function loadCfgs() {
     const tb = $('cfg-table').querySelector('tbody'); tb.innerHTML = '';
     (d.items || []).forEach(it => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${esc(it.group_id)}</td><td>${esc(it.mode || '(全局)')}</td><td>${it.energy_max || '全局'}</td>
-        <td>${it.group_mgmt_enabled == null ? '全局' : it.group_mgmt_enabled}</td>
+      tr.innerHTML = `<td>${esc(it.group_id)}</td><td>${esc(it.mode || '走全局')}</td><td>${it.energy_max || '走全局'}</td>
+        <td>${it.group_mgmt_enabled ? '开' : '关'}</td>
         <td><button class="gray" onclick="editCfg('${escA(it.group_id)}')">编辑</button>
             <button class="danger" onclick="delCfg('${escA(it.group_id)}')">删除</button></td>`;
       tb.appendChild(tr);
@@ -249,37 +249,68 @@ async function editCfg(gid) {
   try {
     const it = await api('/groups/' + encodeURIComponent(gid) + '/config');
     renderCfgEditor(gid, it);
+    flash(it.configured
+      ? '已加载该群配置（群被 bot 触达时会自动建行）'
+      : '该群尚未被 bot 触达：无配置行（正走全局），保存后即独立于全局', true);
   } catch (e) { flash(e.message); }
+}
+// cfgField 渲染单个配置字段：mode / group_mgmt_enabled 用下拉（管理面校验只接受固定枚举，避免 400）。
+function cfgField(k, label, c) {
+  const v = c[k] ?? '';
+  if (k === 'mode') {
+    return `<label>${label}</label><select class="cfg-f" data-k="mode">` +
+      `<option value="mention"${v === 'mention' ? ' selected' : ''}>mention</option>` +
+      `<option value="auto"${v === 'auto' ? ' selected' : ''}>auto</option></select>`;
+  }
+  if (k === 'group_mgmt_enabled') {
+    return `<label>${label}</label><select class="cfg-f" data-k="group_mgmt_enabled">` +
+      `<option value="1"${v === 1 ? ' selected' : ''}>开</option>` +
+      `<option value="0"${v === 0 ? ' selected' : ''}>关</option></select>`;
+  }
+  return `<label>${label}</label><input class="cfg-f" data-k="${k}" value="${escA(v)}">`;
 }
 function renderCfgEditor(gid, c) {
   const fields = [
-    ['mode', '触发模式'], ['group_mgmt_enabled', '群管理开关(1/0)'],
+    ['mode', '触发模式'], ['group_mgmt_enabled', '群管理开关'],
     ['energy_max','精力上限'], ['energy_cost','每次消耗'], ['energy_recover','恢复(点/分)'], ['energy_threshold','触发阈值'],
     ['cooldown_seconds','冷却(秒)'], ['consecutive_limit','连续上限'], ['rest_seconds','休息(秒)'],
     ['quiet_hours_start','静默起 HH:MM'], ['quiet_hours_end','静默止 HH:MM'], ['short_message_chars','短消息阈值'],
   ];
-  $('cfg-editor').innerHTML = `<h3>编辑群 ${esc(gid)}（0/空 = 走全局）</h3>` +
-    fields.map(([k, label]) => `<label>${label}</label><input class="cfg-f" data-k="${k}" value="${escA(c[k] ?? '')}">`).join('') +
+  $('cfg-editor').innerHTML =
+    `<h3>编辑群 ${esc(gid)}（0/空 = 走全局）</h3>` +
+    `<div class="muted">群首次被 bot 触达时，会按当时的全局生效值自动建行；建行后该群即独立于全局` +
+    `（此后改 config.yaml 的 control 段不再影响它）。删除同样只是临时——下一条群消息会重新建行。</div>` +
+    fields.map(([k, label]) => cfgField(k, label, c)).join('') +
     `<button onclick="saveCfg('${escA(gid)}')">保存</button>`;
 }
 async function upsertCfgInput() {
   const gid = $('cfg-gid-new').value.trim();
   if (!gid) return flash('请填写群 ID');
-  renderCfgEditor(gid, { mode: $('cfg-mode-new').value });
+  // 已有配置行 → 载入现有值（避免误清空）；无行（或未被 bot 触达）→ 用上方选择的模式作初值。
+  try {
+    const it = await api('/groups/' + encodeURIComponent(gid) + '/config');
+    if (!it.configured) it.mode = $('cfg-mode-new').value || 'mention';
+    renderCfgEditor(gid, it);
+  } catch (e) { flash(e.message); }
 }
 async function saveCfg(gid) {
-  const body = { group_mgmt_enabled: 0 };
+  const body = {};
+  const numKeys = ['group_mgmt_enabled','energy_max','energy_cost','energy_recover','energy_threshold','cooldown_seconds','consecutive_limit','rest_seconds','short_message_chars'];
   document.querySelectorAll('.cfg-f').forEach(el => {
-    let v = el.value;
-    const numKeys = ['group_mgmt_enabled','energy_max','energy_cost','energy_recover','energy_threshold','cooldown_seconds','consecutive_limit','rest_seconds','short_message_chars'];
+    const v = el.value;
     body[el.dataset.k] = numKeys.includes(el.dataset.k) ? (v === '' ? 0 : Number(v)) : v;
   });
-  try { await api('/groups/' + encodeURIComponent(gid) + '/config', { method: 'PUT', body }); flash('群配置已保存（即时生效）', true); loadCfgs(); }
-  catch (e) { flash(e.message); }
+  try {
+    await api('/groups/' + encodeURIComponent(gid) + '/config', { method: 'PUT', body });
+    flash('群配置已保存（即时生效，且已独立于全局）', true); loadCfgs();
+  } catch (e) { flash(e.message); }
 }
 async function delCfg(gid) {
-  try { await api('/groups/' + encodeURIComponent(gid) + '/config', { method: 'DELETE' }); flash('已删除，恢复全局兜底', true); loadCfgs(); }
-  catch (e) { flash(e.message); }
+  try {
+    await api('/groups/' + encodeURIComponent(gid) + '/config', { method: 'DELETE' });
+    flash('已删除，当前恢复全局兜底；注意该群下次被 bot 触达时会按当时的全局值重新自动建行', true);
+    loadCfgs();
+  } catch (e) { flash(e.message); }
 }
 
 // ── 人格 ──
