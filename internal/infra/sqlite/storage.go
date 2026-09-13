@@ -32,13 +32,17 @@ type Storage struct {
 }
 
 // Open 打开（或创建）dataDir/plumebot.db，自动建表（migrate 执行全部 DDL）。
+// DSN 必须带 _busy_timeout + _journal_mode=WAL：消息管线与管理面 web 共用同一 *sql.DB，
+// 裸 DSN 下 SQLite 默认 rollback journal + busy_timeout=0，任一连接持写锁时其余连接
+// 立即 SQLITE_BUSY（database is locked）——表现为管理页请求 500、群配置保存不落库、
+// 消息落库失败导致回复静默丢弃（回归测试见 concurrent_test.go）。
 func Open(dataDir string) (*Storage, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("sqlite: 创建数据目录失败: %w", err)
 	}
 
 	dbPath := filepath.Join(dataDir, "plumebot.db")
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_busy_timeout=5000&_journal_mode=WAL")
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: 打开数据库失败: %w", err)
 	}

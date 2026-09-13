@@ -27,6 +27,13 @@
   .msg { font-size: 13px; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: none; }
   .msg.err { background: #fbe4e4; color: #a33; display: block; }
   .msg.ok { background: #e3f4e3; color: #387038; display: block; }
+  /* 操作反馈固定右上角：群配置/画像等编辑区在页面下方，内联提示会落在视口外，
+     点击后看不到任何变化（「像没点到」）。 */
+  #app-msg { position: fixed; top: 64px; right: 16px; z-index: 11; margin: 0; max-width: 420px;
+             box-shadow: 0 2px 10px rgba(0,0,0,.16); cursor: pointer; }
+  /* 请求进行中指示：点击后立即出现，避免「不知道有没有发出去」。 */
+  #app-busy { position: fixed; bottom: 16px; right: 16px; z-index: 12; display: none;
+              background: #48566b; color: #fff; font-size: 12px; padding: 5px 10px; border-radius: 12px; }
   #auth-view { max-width: 380px; margin: 80px auto; }
   .hidden { display: none !important; }
   .inline { display: inline-block !important; width: auto !important; }
@@ -34,6 +41,7 @@
 </style>
 </head>
 <body>
+<span id="app-busy">请求中…</span>
 <header id="app-bar" class="hidden">
   <h1>PlumeBot 管理</h1>
   <div>
@@ -69,7 +77,7 @@
 </main>
 
 <main id="app-view" class="hidden">
-  <div class="msg" id="app-msg"></div>
+  <div class="msg" id="app-msg" onclick="flash('')" title="点击关闭"></div>
 
   <section id="tab-cfg" class="hidden">
     <div class="card">
@@ -149,6 +157,9 @@
       <h2>运行态（只读）</h2>
       <label>会话键（群 ID 或 private:QQ）</label><input id="state-key">
       <button onclick="loadState()">查看</button>
+      <div id="state-summary" style="font-size:13px;margin-top:10px;color:#555;">
+        群 ID 形如 <code>123456789</code>，私聊形如 <code>private:10001</code>。运行态在 bot 于该会话产生 auto 回复后才首次落库。
+      </div>
       <pre id="state-view" style="background:#f7f8fa;padding:12px;border-radius:6px;margin-top:10px;font-size:12px;"></pre>
     </div>
   </section>
@@ -166,22 +177,42 @@
 <script>
 // ── 通用 ──
 const $ = id => document.getElementById(id);
-function flash(msg, ok) { const el = $('app-msg'); el.className = 'msg ' + (ok ? 'ok' : 'err'); el.textContent = msg || ''; }
+let flashTimer = null;
+// 提示一律自动消失（错误也消失）：浮层常驻会把上一次的结果误读成当前操作的结果；
+// 成功 1s、错误 2s（错误稍长便于看清），点击浮层可立即关闭。flash('') 仅用于主动清空。
+function flash(msg, ok) {
+  const el = $('app-msg');
+  clearTimeout(flashTimer);
+  if (!msg) { el.className = 'msg'; el.textContent = ''; return; }
+  el.className = 'msg ' + (ok ? 'ok' : 'err'); el.textContent = msg;
+  flashTimer = setTimeout(() => { el.className = 'msg'; el.textContent = ''; }, ok ? 1000 : 2000);
+}
 function flashAuth(msg) { const el = $('auth-msg'); el.className = 'msg ' + (msg ? 'err' : ''); el.textContent = msg || ''; }
+// 请求进行中的浮动指示：每个请求开始即显示，全部结束后隐藏（并发计数）。
+let busyCount = 0;
+function busy(delta) {
+  busyCount += delta;
+  $('app-busy').style.display = busyCount > 0 ? 'block' : 'none';
+}
 
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   const token = localStorage.getItem('plumebot_admin_token');
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  const res = await fetch('/api/v1' + path, {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body != null ? JSON.stringify(opts.body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && data.code === 4011 && token) { showAuth(); throw new Error(data.message || '登录已过期'); }
-  if (data.code !== 0) throw new Error(data.message || ('请求失败 ' + res.status));
-  return data.data;
+  busy(1);
+  try {
+    const res = await fetch('/api/v1' + path, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body != null ? JSON.stringify(opts.body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && data.code === 4011 && token) { showAuth(); throw new Error(data.message || '登录已过期'); }
+    if (data.code !== 0) throw new Error(data.message || ('请求失败 ' + res.status));
+    return data.data;
+  } finally {
+    busy(-1);
+  }
 }
 
 // ── 认证 ──
@@ -423,10 +454,34 @@ async function delFact(f) {
 }
 
 // ── 运行态 ──
+// 查询成功：绿色提示 + 摘要行（精力/连续/上次回复/休息的可读值）+ 原始 JSON；
+// 查询失败：红色提示（后端对无运行态返回可读文案）+ 清空上一次结果，避免误读成新结果。
+// 摘要只展示 bot_state 实际存的字段，不推算冷却剩余（冷却时长是 per-group 配置，此处拿不到）。
+function fmtTime(unixSec) {
+  if (!unixSec) return '—';
+  return new Date(unixSec * 1000).toLocaleString('zh-CN', { hour12: false });
+}
 async function loadState() {
-  const key = $('state-key').value.trim(); if (!key) return flash('请填写会话键');
-  try { const d = await api('/sessions/' + encodeURIComponent(key) + '/state'); $('state-view').textContent = JSON.stringify(d.state ?? d, null, 2); }
-  catch (e) { flash(e.message); }
+  const key = $('state-key').value.trim();
+  const summary = $('state-summary'), view = $('state-view');
+  if (!key) return flash('请填写会话键（群 ID 或 private:QQ）');
+  try {
+    const d = await api('/sessions/' + encodeURIComponent(key) + '/state');
+    const raw = d.state ?? d;
+    view.textContent = JSON.stringify(raw, null, 2);
+    const s = (raw && typeof raw === 'object') ? raw : {};
+    const now = Math.floor(Date.now() / 1000);
+    const rest = s.rest_until ? Math.max(0, s.rest_until - now) : 0;
+    summary.innerHTML = '<b>查询成功</b>：会话 ' + esc(key) +
+      ' ｜ 精力 ' + (s.energy ?? '—') + ' ｜ 连续回复 ' + (s.consecutive_count ?? '—') +
+      ' ｜ 上次回复 ' + esc(fmtTime(s.last_reply_at)) +
+      ' ｜ 休息至 ' + esc(fmtTime(s.rest_until)) + (rest > 0 ? '（剩余 ' + rest + 's）' : '');
+    flash('运行态查询成功：' + key, true);
+  } catch (e) {
+    view.textContent = '';
+    summary.innerHTML = '<span style="color:#a33"><b>查询失败</b>：' + esc(e.message) + '</span>';
+    flash(e.message);
+  }
 }
 
 // ── 改密 ──

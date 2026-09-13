@@ -5,9 +5,12 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 
+	"plumebot/internal/domain"
 	"plumebot/internal/handler/web/dto/response"
 	"plumebot/internal/service/admin"
 )
@@ -27,9 +30,16 @@ func (h *StateHandler) RegisterRoutes(g *gin.RouterGroup) {
 }
 
 // get 查询会话运行态；不存在 4041。
+// 会话键输入来自手填，缺省走 handleError 的「目标不存在」无法定位问题，这里给出
+// 该会话无运行态的可读文案（运行态在 bot 于该会话产生 auto 回复后才首次落库）。
 func (h *StateHandler) get(c *gin.Context) {
-	st, err := h.svc.GetBotState(c.Request.Context(), c.Param("session_key"))
+	key := c.Param("session_key")
+	st, err := h.svc.GetBotState(c.Request.Context(), key)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			fail(c, http.StatusNotFound, response.CodeNotFound, "该会话暂无运行态（键 "+key+"）")
+			return
+		}
 		handleError(c, err)
 		return
 	}

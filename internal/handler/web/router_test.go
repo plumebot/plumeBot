@@ -407,8 +407,16 @@ func TestStateEndpointNotFound(t *testing.T) {
 	r, _ := newTestRouter(t)
 	token := registerAndLogin(t, r)
 	// 运行态只读：无数据时 404，路由可达。
-	if status, _ := doJSON(t, r, http.MethodGet, "/api/v1/sessions/g-none/state", token, nil); status != http.StatusNotFound {
+	// 文案需带会话键——前端手填会话键，通用「目标不存在」无法定位是哪个会话查不到。
+	status, env := doJSON(t, r, http.MethodGet, "/api/v1/sessions/g-none/state", token, nil)
+	if status != http.StatusNotFound {
 		t.Fatalf("无运行态应 404, 实际 %d", status)
+	}
+	if env["code"] != float64(response.CodeNotFound) {
+		t.Fatalf("无运行态应返回 4041, 实际 %v", env["code"])
+	}
+	if msg, _ := env["message"].(string); !strings.Contains(msg, "g-none") {
+		t.Fatalf("无运行态应返回带会话键的可读文案, 实际 message=%q", msg)
 	}
 }
 

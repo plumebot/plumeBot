@@ -36,14 +36,18 @@ func TestVerifyTamperedToken(t *testing.T) {
 		t.Fatalf("Sign 失败: %v", err)
 	}
 	// 篡改载荷段最后一个 base64 字符。
+	// 注意不能只改签名段末位：base64url 末位字符只有高 4~6 位是有效数据位，低位是
+	// 补零 bit，改它们不改变解码结果，验签照样通过（实测约 5.6% 概率，原实现因此间歇性假失败）。
+	// 改载荷段则任何解码差异都会让 HMAC 不匹配，判定稳定。
 	var sb strings.Builder
 	sb.WriteString(token)
 	b := []byte(sb.String())
-	last := len(b) - 1
-	if b[last] == 'a' {
-		b[last] = 'b'
+	dot := strings.LastIndexByte(token, '.')
+	payloadLast := dot - 1
+	if b[payloadLast] == 'a' {
+		b[payloadLast] = 'b'
 	} else {
-		b[last] = 'a'
+		b[payloadLast] = 'a'
 	}
 	if _, err := m.Verify(string(b)); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("篡改 token 应拒验, 实际: %v", err)
