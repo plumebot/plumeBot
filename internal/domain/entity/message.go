@@ -10,6 +10,7 @@ type Message struct {
 	MessageID   string        // 消息唯一 ID
 	GroupID     string        // 群 ID（私聊时为空）
 	UserID      string        // 发送者 QQ 号
+	SenderName  string        // 发送者展示名：群名片(card)优先、回落昵称(nickname)；空 = 未解析（组装回落 QQ 号）。纯内存（不落 SQLite），供当前进程窗口/画像渲染
 	Parts       []ContentPart // 消息内容段（text/at/image/audio/video/file）
 	Timestamp   int64         // Unix 时间戳（秒）
 	MessageType string        // 消息类型：group / private

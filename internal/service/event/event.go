@@ -154,11 +154,11 @@ func (s *EventService) respond(ctx context.Context, msg entity.Message) error {
 }
 
 // agentReply 构造 Agent 文本回复载荷（B-003 entity.Reply）。
-// 群聊被 @（mention_forced）：@ 触发者但**不引用触发消息**——`[CQ:reply]` 引用预览会带出触发消息
-// 原文（含剥除前的 @bot），QQ 客户端把 @自己 渲染为 bot 的 QQ 号，出现「人名后跟两个 bot 的 QQ」；
-// auto 主动发言/私聊：纯文本不引用不 @。
+// 群聊统一 @ 触发者（mention 与 auto 一致，P6 联调修复「auto 回复对象不明确」）但**不引用
+// 触发消息**——`[CQ:reply]` 引用预览会带出触发消息原文（含剥除前的 @bot），QQ 客户端把 @自己
+// 渲染为 bot 的 QQ 号，出现「人名后跟两个 bot 的 QQ」；私聊对方唯一，纯文本不 @ 不引用。
 func agentReply(msg entity.Message, reply string) entity.Reply {
-	if msg.MessageType == "group" && msg.Mentioned {
+	if msg.MessageType == "group" {
 		return entity.Reply{
 			At:       "sender",
 			Segments: []entity.Segment{{Kind: entity.SegmentKindText, Text: reply}},

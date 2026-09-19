@@ -122,8 +122,11 @@ group_jargon）→ 经 ctx 内 domain.Sender 发送（B-003：matcher 闭包注�
 replyToChain 转 message.ReplyWithMessage/At 后 SendChain）→ 发送成功才窗口追加 bot 回复（合成
 `self:` MessageID 规避空串冲突）+ OnReplied 记账（B-038 时序）；插件回复经 Sender 执行（B-017）；
 B-040 定案 GetWindow 深拷贝 + BackfillParts 安全回填（组装/压缩无跨 LLM 阻塞、
-常规路径零冗余落库）；Agent 回复群聊被 @ 时仅 @ 触发者、不引用触发消息（避免引用预览带出
-触发消息内的 @bot，见 event.go agentReply）。
+常规路径零冗余落库）；Agent 回复群聊统一 @ 触发者（mention 与 auto 一致，P6 联调修复 auto 回复
+对象不明确）、不引用触发消息（避免引用预览带出触发消息内的 @bot，见 event.go agentReply）；
+P6 联调昵称注入：entity.Message.SenderName（convert 从 ev.Sender 提取、群名片 card 优先回落 nickname）
+→ speakerText/画像成员事实「昵称」优先、无昵称回落 QQ 号，纯内存不落库（旧消息回落），
+见 convert.go senderDisplayName 与架构 §6 ④/⑤ 渲染。
 已完成：B-015 AI 群管理动作执行（roadmap B-015 与架构 §15）：domain.GroupManager（Execute(ctx,
 entity.GroupAction) 统一入口，与 Sender 分离）+ per-event ctx 注入（matcher 闭包构造 botGroupManager，
 与 Session/Sender 同构）；4 个 AI 工具 group_mute/group_unmute/group_kick/group_set_card（Desc 写清

@@ -126,6 +126,52 @@ func TestToMessageMentioned(t *testing.T) {
 	}
 }
 
+// TestToMessageSenderName 校验 toMessage 从 ev.Sender 提取展示名：群名片(card) 优先、回落昵称(nickname)。
+// 两者皆空（无 sender/昵称为空）→ 空串（组装方回落 QQ 号）。
+func TestToMessageSenderName(t *testing.T) {
+	base := &zero.Event{
+		PostType:    "message",
+		MessageType: "group",
+		MessageID:   int64(1),
+		GroupID:     int64(2),
+		UserID:      int64(3),
+		Message:     message.Message{message.Text("hi")},
+	}
+	// 有群名片 → 群名片优先。
+	ev := *base
+	ev.Sender = &zero.User{ID: 3, NickName: "昵称A", Card: "群名片B"}
+	m, ok := toMessage(&ev, nil)
+	if !ok || m.SenderName != "群名片B" {
+		t.Errorf("SenderName = %q, want 群名片优先（群名片B）", m.SenderName)
+	}
+	// 无群名片 → 回落昵称。
+	ev.Sender = &zero.User{ID: 3, NickName: "昵称A"}
+	m, _ = toMessage(&ev, nil)
+	if m.SenderName != "昵称A" {
+		t.Errorf("SenderName = %q, want 回落昵称A", m.SenderName)
+	}
+	// 全空 / nil Sender → 空串（回落 QQ 号）。
+	ev.Sender = &zero.User{ID: 3}
+	m, _ = toMessage(&ev, nil)
+	if m.SenderName != "" {
+		t.Errorf("无昵称 SenderName = %q, want 空串", m.SenderName)
+	}
+	ev.Sender = nil
+	m, _ = toMessage(&ev, nil)
+	if m.SenderName != "" {
+		t.Errorf("nil Sender SenderName = %q, want 空串", m.SenderName)
+	}
+	// 私聊同样提取 nickname。
+	ev = *base
+	ev.MessageType = "private"
+	ev.UserID = 3
+	ev.Sender = &zero.User{ID: 3, NickName: "私聊昵称"}
+	m, _ = toMessage(&ev, nil)
+	if m.SenderName != "私聊昵称" {
+		t.Errorf("私聊 SenderName = %q, want 私聊昵称", m.SenderName)
+	}
+}
+
 // TestToParts 校验段数组 → Parts 映射（text/at/image/record/video/file + 未知段兜底转文本）。
 func TestToParts(t *testing.T) {
 	cases := []struct {

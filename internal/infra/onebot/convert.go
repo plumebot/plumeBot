@@ -27,11 +27,28 @@ func toMessage(ev *zero.Event, cache *imagecache.Cache) (entity.Message, bool) {
 		MessageID:   formatID(ev.MessageID),
 		GroupID:     formatID(ev.GroupID),
 		UserID:      formatID(ev.UserID),
+		SenderName:  senderDisplayName(ev.Sender),
 		Parts:       toParts(ev.Message, cache),
 		Timestamp:   ev.Time,
 		MessageType: ev.MessageType,
 		Mentioned:   ev.IsToMe, // P5-001：私聊恒 true；群聊被 @（at-self 段已剥离）为 true
 	}, true
+}
+
+// senderDisplayName 从事件 sender 提取展示名（供组装渲染，P6 联调修复「上下文只有 QQ 号」）：
+// 群名片 card 优先，回落昵称 nickname；两者皆空（无 sender/匿名/无昵称）→ 空串，
+// 由组装方回落到 QQ 号（见 service/memory speakerText）。
+func senderDisplayName(u *zero.User) string {
+	if u == nil {
+		return ""
+	}
+	if u.Card != "" {
+		return u.Card
+	}
+	if u.NickName != "" {
+		return u.NickName
+	}
+	return ""
 }
 
 // toParts 将 ZeroBot 消息段数组转换为领域层 ContentPart 列表。

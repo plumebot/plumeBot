@@ -240,6 +240,7 @@ func (s *MemoryService) buildProfileText(ctx context.Context, msg entity.Message
 			logger.Warn("查询群黑话失败", logger.S("group_id", msg.GroupID), logger.Err(err))
 		}
 		if members := windowMembers(win, botID); len(members) > 0 {
+			names := windowSenderNames(win, msg) // uid → 展示名（有名字用昵称，无名字回落 QQ 号）
 			sb.WriteString("【成员事实】\n")
 			for _, uid := range members {
 				facts, err := s.store.ListMemberFacts(ctx, msg.GroupID, uid)
@@ -252,6 +253,9 @@ func (s *MemoryService) buildProfileText(ctx context.Context, msg entity.Message
 				}
 				if n := s.factsPerMember(); len(facts) > n {
 					facts = facts[:n]
+				}
+				if nick, ok := names[uid]; ok && nick != "" {
+					uid = nick
 				}
 				fmt.Fprintf(&sb, "%s：%s\n", uid, strings.Join(facts, "；"))
 			}
@@ -302,14 +306,19 @@ func toChatMessage(m entity.Message, botID string) entity.ChatMessage {
 }
 
 // speakerText 返回消息的 LLM 文本视图；群聊消息带发送者前缀（区分不同说话人）。
-// 格式 "[QQ号]: 内容" 与压缩输入（buildLevel1UserPrompt，架构 §5）对齐——QQ 号是唯一说话人标识，
-// agent 可据此跟踪「谁说了什么」；bot 自己的消息同样带前缀（其 QQ 即自身标识，角色仍为 assistant）。
+// 格式 "[昵称]: 内容"，无昵称回落 "[QQ号]: 内容"（P6 联调修复「上下文只有 QQ 号」）——
+// 昵称来自 convert 的 SenderName（群名片优先），bot 自己的消息无 SenderName 回落其 QQ 标识，
+// 角色仍为 assistant。具备名字后 agent 可用自然称呼跟踪/点名说话人。
 // 私聊对方唯一且 ② 会话画像已标「用户 ID」，不加前缀避免噪音。
 func speakerText(m entity.Message) string {
 	if m.MessageType != "group" || m.UserID == "" {
 		return m.ForLLM()
 	}
-	return "[" + m.UserID + "]: " + m.ForLLM()
+	name := m.SenderName
+	if name == "" {
+		name = m.UserID // 无名字回落 QQ 号
+	}
+	return "[" + name + "]: " + m.ForLLM()
 }
 
 // windowMembers 窗口内去重成员（首次出现顺序），排除 bot 自身（bot 的上下文由其人格承担）。
@@ -324,6 +333,23 @@ func windowMembers(win []entity.Message, botID string) []string {
 		out = append(out, m.UserID)
 	}
 	return out
+}
+
+// windowSenderNames 收集 uid → 展示名（SenderName，群名片优先）；当前消息也计入（可能不在窗口）。
+// 供 ② 会话画像成员事实渲染：有名字用昵称，无名字回落 QQ 号（windowMembers 已排除 bot，
+// bot 无 SenderName 亦不会注入）。仅内存数据，无 DB 查询。
+func windowSenderNames(win []entity.Message, cur entity.Message) map[string]string {
+	names := make(map[string]string)
+	collect := func(m entity.Message) {
+		if m.SenderName != "" {
+			names[m.UserID] = m.SenderName
+		}
+	}
+	collect(cur)
+	for _, m := range win {
+		collect(m)
+	}
+	return names
 }
 
 // jargonCap 返回 confirmed 黑话注入条数上限（B-014），≤0 → config 默认。

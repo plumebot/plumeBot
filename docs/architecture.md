@@ -176,9 +176,13 @@ Agent 通过 eino Tool 机制驱动记忆更新，在对话中自行判断何时
 > 成员事实与 confirmed 黑话均「读在组装」现查注入（§4.3.1，上限见 `llm.prompt`，P6-001 落地）；
 > 私聊无群画像，② 仅含当前用户成员事实（group_id 空）。
 >
-> ④/⑤ 渲染（P6-002 扩展）：群聊消息带发送者前缀 `[QQ号]: 内容`（bot 自身消息同，QQ 即其标识，
-> 角色仍为 assistant）——格式与压缩输入（§5.1 buildLevel1UserPrompt）对齐，agent 可据此区分
-> 不同说话人；私聊对方唯一、② 已标「用户 ID」，不加前缀。
+> ④/⑤ 渲染（P6-002 扩展；P6 联调昵称注入）：群聊消息带发送者前缀 `[昵称]: 内容`，
+> 无昵称回落 `[QQ号]: 内容`（昵称 = convert 从 ev.Sender 提取，群名片 card 优先回落 nickname，
+> 见 `infra/onebot convert.go senderDisplayName`；bot 自身消息无昵称回落其 QQ 标识，角色仍为
+> assistant）——格式与压缩输入（§5.1 buildLevel1UserPrompt）对齐，agent 可据此区分不同说话人，
+> 并按昵称自然称呼/点名；私聊对方唯一、② 已标「用户 ID」，不加前缀。
+> ② 会话画像成员事实同样昵称渲染「昵称：事实」（`windowSenderNames` 取窗口内消息 SenderName，
+> 无昵称回落 QQ 号）。`SenderName` 纯内存不落 SQLite：旧消息/重灌消息为空 → 组装回落 QQ 号。
 
 ---
 
