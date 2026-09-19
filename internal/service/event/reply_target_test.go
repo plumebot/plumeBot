@@ -1,6 +1,7 @@
 package event
 
 import (
+	"context"
 	"testing"
 
 	"plumebot/internal/domain/entity"
@@ -36,6 +37,31 @@ func TestAgentReplyPrivateNoAt(t *testing.T) {
 	r := agentReply(entity.Message{MessageID: "p1", UserID: "u1", MessageType: "private"}, "好的")
 	if r.At != "" || r.Quote {
 		t.Errorf("私聊不应 @/引用: %+v", r)
+	}
+}
+
+// TestRespondBotReplyCarriesDisplayName bot 自身回复以展示名（botName）入窗：
+// 窗口内的 bot 回复 Message 带 SenderName=botName，后续组装渲染为 [名称]: 内容 而非 [QQ号]: 内容
+// （speakerText 昵称优先，渲染断言见 memory 包 speakerText 基线测试）。
+func TestRespondBotReplyCarriesDisplayName(t *testing.T) {
+	f := newTailFixture()
+	f.control.dec = entity.Decision{Reply: true}
+	if err := f.svc.tail(withSender(f.sender), groupMsg("m1")); err != nil {
+		t.Fatalf("tail 不应报错: %v", err)
+	}
+	win, err := f.svc.memory.GetWindow(context.Background(), "g1")
+	if err != nil {
+		t.Fatalf("GetWindow 失败: %v", err)
+	}
+	if len(win) != 2 {
+		t.Fatalf("窗口应含 [入站消息, bot 回复] 2 条, 实际 %d", len(win))
+	}
+	bot := win[1]
+	if bot.UserID != "bot1" || bot.SenderName != "mifi" {
+		t.Errorf("窗口内 bot 回复应 UserID=bot1/SenderName=mifi: %+v", bot)
+	}
+	if bot.SenderName == "" {
+		t.Error("修复目标：bot 自身消息应带展示名，而非回落 QQ 号")
 	}
 }
 

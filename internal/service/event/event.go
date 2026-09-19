@@ -22,11 +22,14 @@ type EventService struct {
 	plugin   *plugin.PluginService
 	control  domain.Control
 	botID    string // bot 自身 QQ 号（BuildMessages 的 assistant 角色映射 + bot 回复 UserID）
+	botName  string // bot 展示名（cfg.Bot.Name，空兜底 DefaultBotName）：bot 自身回复的 SenderName，上下文以名代替 QQ 号
 	msgChain Handler
 }
 
 // NewEventService 创建 EventService，注入全部子 service 与中间件配置。
-// botID 为 bot 自身 QQ 号（cfg.Bot.SelfID），空值退化为「窗口内 bot 消息渲染为 user 角色」。
+// botID 为 bot 自身 QQ 号（cfg.Bot.SelfID），空值退化为「窗口内 bot 消息渲染为 user 角色」；
+// botName 为 bot 展示名（cfg.Bot.Name），空 → config.DefaultBotName，用作 bot 自身回复的
+// SenderName（见 botReplyMessage：渲染进上下文时以名代替 QQ 号）。
 // 消息管线顺序固定为：日志 → 限流 → 敏感词 → 末端处理。
 func NewEventService(
 	agent *agent.AgentService,
@@ -35,13 +38,18 @@ func NewEventService(
 	control domain.Control,
 	mwCfg config.MiddlewareConfig,
 	botID string,
+	botName string,
 ) *EventService {
+	if botName == "" {
+		botName = config.DefaultBotName
+	}
 	s := &EventService{
 		agent:   agent,
 		memory:  memory,
 		plugin:  plugin,
 		control: control,
 		botID:   botID,
+		botName: botName,
 	}
 	mws := []Middleware{
 		logMiddleware,
@@ -172,6 +180,8 @@ func agentReply(msg entity.Message, reply string) entity.Reply {
 // botReplyMessage 构造 bot 自身回复的 entity.Message（窗口追加 + SQLite 持久化）。
 // MessageID 用合成 ID（"self:"+UnixNano）：messages.message_id 全局唯一 + INSERT OR IGNORE，
 // 空串会被丢弃/互相覆盖（B-041 相邻边角，仅 bot 回复侧根修；入站 message_id=0 根修仍归 B-041）。
+// SenderName 填 bot 展示名（NewEventService 兜底 DefaultBotName）：bot 自身消息进窗口后再组装时
+// 渲染为 [名称]: 内容 而非 [QQ号]: 内容（speakerText 昵称优先，见架构 §6）。
 // 注意：私聊下 UserID=botID 使 SessionKey() 派生 "private:"+botID，持久化须经
 // PersistMessageToSession 显式并入触发消息（用户）的会话，否则 bot 回复永远进不了对话窗（见 respond）。
 func (s *EventService) botReplyMessage(msg entity.Message, reply string) entity.Message {
@@ -179,6 +189,7 @@ func (s *EventService) botReplyMessage(msg entity.Message, reply string) entity.
 		MessageID:   "self:" + strconv.FormatInt(time.Now().UnixNano(), 10),
 		GroupID:     msg.GroupID,
 		UserID:      s.botID,
+		SenderName:  s.botName,
 		Parts:       []entity.ContentPart{{Type: entity.PartTypeText, Text: reply}},
 		Timestamp:   time.Now().Unix(),
 		MessageType: msg.MessageType,

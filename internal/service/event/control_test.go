@@ -101,7 +101,8 @@ func withSender(s domain.Sender) context.Context {
 }
 
 // tailFixture 组装最小 EventService：fakeAgent（默认回复 "ok"）+ memory（fake 存储、describer nil）
-// + plugin 无插件（命令分发返回 ErrNotFound，短路语义不变）+ fakeControl + botID，并暴露各桩便于断言。
+// + plugin 无插件（命令分发返回 ErrNotFound，短路语义不变）+ fakeControl + botID(bot1)/botName(mifi)，
+// 并暴露各桩便于断言。
 type tailFixture struct {
 	svc     *EventService
 	store   *tailStore
@@ -122,6 +123,7 @@ func newTailFixture() *tailFixture {
 			c,
 			config.MiddlewareConfig{},
 			"bot1",
+			"mifi",
 		),
 		store:   st,
 		control: c,
@@ -212,8 +214,9 @@ func TestRespondSendsOnSuccess(t *testing.T) {
 		t.Fatalf("应持久化 2 条消息（入站 + bot 回复）, 实际 %d", len(f.store.saved))
 	}
 	bot := f.store.saved[1]
-	if !strings.HasPrefix(bot.MessageID, "self:") || bot.UserID != "bot1" || bot.Parts[0].Text != "ok" {
-		t.Errorf("bot 回复持久化错误: %+v", bot)
+	if !strings.HasPrefix(bot.MessageID, "self:") || bot.UserID != "bot1" || bot.Parts[0].Text != "ok" ||
+		bot.SenderName != "mifi" {
+		t.Errorf("bot 回复持久化错误（应带 UserID=bot1/SenderName=mifi）: %+v", bot)
 	}
 }
 
