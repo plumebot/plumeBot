@@ -69,7 +69,10 @@ func main() { plugin.Serve(&hello{}) }
 - per-session 锁粒度：不同群/私聊互不阻塞，持锁绝不含 LLM/IO；
 - zap 结构化日志 + lumberjack 滚动切分：每条消息**一入口一结局**（`消息结局` + outcome 字段可对账），
   按精确级别分文件落 `~/.plumebot/logs/`（`debug/info/warn/error/fatal.log` + gin 访问 `gin.log`，
-  仅写文件不写终端，统一 10MB 切分 / 5 备份 / 30 天保留）；规范见 `docs/architecture.md` §17。
+  仅写文件不写终端，统一 10MB 切分 / 5 备份 / 30 天保留）；规范见 `docs/architecture.md` §17；
+- **日志浏览**：管理控制台内置日志页，按**等级 × 时间段 × trace_id** 组合筛选并分页（`GET /api/v1/logs`）；
+  trace_id 管理端=客户端 IP、QQ 侧=`group:<群号>`/`private:<QQ号>`，一次会话的入口行→结局行→模型调用
+  可一键串联（见 §17.6）。
 
 ## 架构一览
 

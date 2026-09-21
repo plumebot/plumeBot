@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"plumebot/internal/service/admin"
+	logsvc "plumebot/internal/service/log"
 	"plumebot/pkg/jwt"
 )
 
@@ -28,11 +29,12 @@ var staticFS embed.FS
 
 // NewRouter 构建管理后端 gin 路由。
 //   - 免鉴权：GET /ping（存活探针）、GET / 与 /static/*（前端页）、认证域的 register/login/status；
-//   - /api/v1 其余路由统一经 verifyAuth（4011）；各配置域路由由独立 Handler 的
-//     RegisterRoutes 挂载（决策 D11：单一 web 包 + 每域一文件）。
+//   - /api/v1 其余路由统一经 verifyAuth（4011）+ apiLimiter（每 IP 令牌桶，429）；
+//     各配置域路由由独立 Handler 的 RegisterRoutes 挂载（决策 D11：单一 web 包 + 每域一文件），
+//     日志浏览域依赖 service/log（logSvc），与配置管理链路分离。
 //
 // admin.enabled=false 时 main 侧不调用本函数（回退仅 /ping 的 newWebServer）。
-func NewRouter(svc *admin.Service, mgr *jwt.Manager) *gin.Engine {
+func NewRouter(svc *admin.Service, logSvc *logsvc.Service, mgr *jwt.Manager) *gin.Engine {
 	r := gin.New()
 	r.Use(Recovery())
 	r.Use(AccessLogger())
@@ -49,11 +51,13 @@ func NewRouter(svc *admin.Service, mgr *jwt.Manager) *gin.Engine {
 		})
 	}
 	if sub, err := fs.Sub(staticFS, "static"); err == nil {
-		r.StaticFS("/static", http.FS(sub))
+		r.StaticFS("/static", http.FileSystem(http.FS(sub)))
 	}
 
 	// API：各职责域 handler 挂载自己的路由。
-	api := r.Group("/api/v1")
+	// 每 IP 限流挂在**整个 /api/v1 组**（含 auth 域自建的已鉴权子组，避免漏挂）：
+	// register/login 另叠加更紧的 authLimiter（2/s、burst 10），有效速率取两者中更紧者。
+	api := r.Group("/api/v1", newAPILimiter().middleware())
 	newAuthHandler(svc).RegisterRoutes(api, mgr)
 
 	authed := api.Group("", verifyAuth(mgr))
@@ -63,6 +67,7 @@ func NewRouter(svc *admin.Service, mgr *jwt.Manager) *gin.Engine {
 	newJargonHandler(svc).RegisterRoutes(authed)
 	newMemberFactHandler(svc).RegisterRoutes(authed)
 	newStateHandler(svc).RegisterRoutes(authed)
+	newLogHandler(logSvc).RegisterRoutes(authed)
 
 	return r
 }

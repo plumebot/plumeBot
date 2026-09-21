@@ -90,17 +90,17 @@ func (s *EventService) tail(ctx context.Context, msg entity.Message) error {
 func (s *EventService) respond(ctx context.Context, msg entity.Message) error {
 	d, err := s.control.ShouldReply(ctx, msg)
 	if err != nil {
-		logOutcome(msg, OutcomeControlError, logger.Err(err))
+		logOutcome(ctx, msg, OutcomeControlError, logger.Err(err))
 		return nil
 	}
 	if !d.Reply {
 		// 未触发也属正常结局（架构 §17.4：Info，从 Debug 升 Info 保证结局账本完整）。
-		logOutcome(msg, OutcomeNotTriggered, logger.S("reason", string(d.Reason)))
+		logOutcome(ctx, msg, OutcomeNotTriggered, logger.S("reason", string(d.Reason)))
 		return nil
 	}
 	sender, ok := domain.SenderFrom(ctx)
 	if !ok {
-		logOutcome(msg, OutcomeNoSender)
+		logOutcome(ctx, msg, OutcomeNoSender)
 		return nil
 	}
 
@@ -108,12 +108,12 @@ func (s *EventService) respond(ctx context.Context, msg entity.Message) error {
 	sctx := entity.WithSession(ctx, entity.Session{GroupID: msg.GroupID, UserID: msg.UserID})
 	msgs, err := s.memory.BuildMessages(sctx, msg, s.botID)
 	if err != nil {
-		logOutcome(msg, OutcomePromptFail, logger.Err(err))
+		logOutcome(ctx, msg, OutcomePromptFail, logger.Err(err))
 		return nil
 	}
 	reply, err := s.agent.GenerateReply(sctx, msgs)
 	if err != nil {
-		logOutcome(msg, OutcomeAgentFail, logger.Err(err))
+		logOutcome(ctx, msg, OutcomeAgentFail, logger.Err(err))
 		return nil
 	}
 	// 剥除 reply 开头可能出现的 "[...]:" 前缀（可能连续出现多个）。
@@ -125,13 +125,13 @@ func (s *EventService) respond(ctx context.Context, msg entity.Message) error {
 		reply = strings.TrimPrefix(reply, reply[:end+2])
 	}
 	if strings.TrimSpace(reply) == "" {
-		logOutcome(msg, OutcomeEmptyReply)
+		logOutcome(ctx, msg, OutcomeEmptyReply)
 		return nil
 	}
 
 	// 发送（B-003）。发送失败 = bot 未说话，不记账、不追加窗口。
 	if err := sender.Send(ctx, agentReply(msg, reply)); err != nil {
-		logOutcome(msg, OutcomeSendFail, logger.Err(err))
+		logOutcome(ctx, msg, OutcomeSendFail, logger.Err(err))
 		return nil
 	}
 
@@ -140,16 +140,16 @@ func (s *EventService) respond(ctx context.Context, msg entity.Message) error {
 	// 发送成功之后的持久化/记账失败属次要故障，单独 Warn，主结局 agent_replied 保留一行 Info。
 	botMsg := s.botReplyMessage(msg, reply)
 	if full, err := s.memory.PersistMessageToSession(ctx, msg.SessionKey(), botMsg); err != nil {
-		logger.Warn("bot 回复持久化失败",
+		logger.From(ctx).Warn("bot 回复持久化失败",
 			logger.S("group_id", msg.GroupID), logger.Err(err))
 	} else if full {
 		s.memory.Compress(ctx, msg) // 压缩触发消息所属会话（bot 回复已并入该会话）
 	}
 	if err := s.control.OnReplied(ctx, msg); err != nil {
-		logger.Warn("回复状态记录失败",
+		logger.From(ctx).Warn("回复状态记录失败",
 			logger.S("group_id", msg.GroupID), logger.S("user_id", msg.UserID), logger.Err(err))
 	}
-	logOutcome(msg, OutcomeAgentReplied, logger.S("reason", string(d.Reason)))
+	logOutcome(ctx, msg, OutcomeAgentReplied, logger.S("reason", string(d.Reason)))
 	return nil
 }
 
@@ -194,7 +194,7 @@ func (s *EventService) botReplyMessage(msg entity.Message, reply string) entity.
 func (s *EventService) sendReply(ctx context.Context, r entity.Reply) error {
 	sender, ok := domain.SenderFrom(ctx)
 	if !ok {
-		logger.Warn("缺少回复发送能力（Sender 未注入），跳过回复")
+		logger.From(ctx).Warn("缺少回复发送能力（Sender 未注入），跳过回复")
 		return nil
 	}
 	return sender.Send(ctx, r)

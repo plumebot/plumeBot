@@ -67,7 +67,7 @@ func (r *rateLimiter) wait(ctx context.Context, msg entity.Message) error {
 		if ctx.Err() != nil {
 			return err
 		}
-		logOutcome(msg, OutcomeRateLimited,
+		logOutcome(ctx, msg, OutcomeRateLimited,
 			logger.S("scope", scope), logger.S("max_wait", fmt.Sprintf("%ds", r.cfg.MaxWaitSeconds)))
 		return domain.ErrRateLimited
 	}

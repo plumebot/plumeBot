@@ -6,6 +6,7 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -157,6 +158,46 @@ func Sync() {
 // L 返回底层 *zap.Logger，供需要直接使用 zap API 的场景。
 func L() *zap.Logger {
 	return zl
+}
+
+// Dir 返回实际生效的日志目录（Init 未显式指定 Dir 时为 ~/.plumebot/logs）。
+// 供日志读取侧（infra/logfile）构造注入使用，避免各处重复解析默认目录。
+func Dir() string {
+	return withDefaults(Config{}).Dir
+}
+
+// ctxKey 是 ctx 注入派生 logger 的私有键（避免与其他包键冲突）。
+type ctxKey struct{}
+
+// Context 把派生 logger（附带 fields，如 trace_id）注入 ctx；下游经 From(ctx) 取出使用。
+// 未 Init 时注入 no-op logger（From 仍可安全取出并调用）。
+func Context(ctx context.Context, fields ...zap.Field) context.Context {
+	return context.WithValue(ctx, ctxKey{}, derived(fields...))
+}
+
+// From 取出 ctx 中注入的派生 logger；未注入回退全局 logger（行为与包级 Debug/Info/... 一致，
+// 便于渐进接入 trace_id 而不必一次改完所有调用）；两者皆无（未 Init）返回 no-op logger，
+// 保证返回值非 nil，调用方无需判空。
+func From(ctx context.Context) *zap.Logger {
+	if l, ok := ctx.Value(ctxKey{}).(*zap.Logger); ok && l != nil {
+		return l
+	}
+	if zl != nil {
+		return zl
+	}
+	return zap.NewNop()
+}
+
+// derived 构造附带 fields 的派生 logger；无字段时直接返回基准 logger（省一次派生）。
+func derived(fields ...zap.Field) *zap.Logger {
+	base := zl
+	if base == nil {
+		base = zap.NewNop()
+	}
+	if len(fields) == 0 {
+		return base
+	}
+	return base.With(fields...)
 }
 
 // 各级别日志方法在全局 logger 未初始化（zl == nil，如组件单测）时安全丢弃，

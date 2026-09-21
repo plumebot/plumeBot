@@ -44,8 +44,11 @@ func NewService(store domain.Storage, mem *memory.MemoryService, mgr *jwt.Manage
 }
 
 // audit 记录管理面写操作（谁/何时/改了哪个配置目标/来源 IP，见计划书 §11 安全考虑 6）。
+// 经 logger.From(ctx) 输出：ctx 内由 handler/web.withClientIP 注入的派生 logger 携带
+// trace_id=来源 IP（架构 §17.6），故管理面操作可在日志浏览页按 IP 一键串联；
+// ip 字段保留显式记录（与 trace_id 冗余但语义直白）。
 func (s *Service) audit(ctx context.Context, by, resource, target string) {
-	logger.Info("admin config changed",
+	logger.From(ctx).Info("admin config changed",
 		logger.S("admin_identity", by),
 		logger.S("resource", resource),
 		logger.S("target", target),

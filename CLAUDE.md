@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第七阶段：管理后端（P7-001 管理配置 API 已完结；第六阶段 P6-003 端到端压测待实现） |
+| 当前阶段 | 第七阶段：管理后端（P7-001 管理配置 API、P7-002 网页日志浏览已完结；第六阶段 P6-003 端到端压测待实现） |
 | 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B 台账，完成即删行） |
 
 ```bash
@@ -24,7 +24,7 @@ go build ./...
 # 静态分析
 go vet ./...
 
-# 测试（已有多包单测：service/event、service/memory、service/agent、service/control、service/plugin、service/admin、infra/onebot、infra/ai、infra/ai/tools、infra/imagecache、infra/sqlite、handler/web、pkg/config、pkg/jwt、pkg/ahocorasick、pkg/base64util、plugin-sdk（独立 module：entity + plugin））
+# 测试（已有多包单测：service/event、service/memory、service/agent、service/control、service/plugin、service/admin、service/log、infra/onebot、infra/ai、infra/ai/tools、infra/imagecache、infra/sqlite、infra/logfile、handler/web、pkg/config、pkg/jwt、pkg/logger、pkg/ahocorasick、pkg/base64util、plugin-sdk（独立 module：entity + plugin））
 go test ./...
 
 # 运行（连接 NapCat，需先配置 config.yaml 的 onebot.ws_url；缺失配置会自动写入默认模板）
@@ -201,6 +201,7 @@ plumebot/
 │   │   ├── storage.go              #   Storage 接口（P2-001 已实现）
 │   │   ├── control.go              #   Control 接口（P5-001/002 由 service/control 实现）
 │   │   ├── sender.go               #   Sender 接口 + WithSender/SenderFrom（B-003，由 infra/onebot 实现）
+│   │   ├── log.go                  #   LogReader 接口（P7-002 由 infra/logfile 实现；查询条件/结果为 entity.LogQuery/LogPage）
 │   │   └── errors.go               #   哨兵错误 + 参数化错误（SensitiveWordError）
 │   ├── service/                    # 业务编排层，依赖 domain 接口
 │   │   ├── event/                  #   中间件链：日志 → 限流 → 敏感词 → 持久化(tail)
@@ -212,7 +213,8 @@ plumebot/
 │   │   ├── agent/                  #   薄透传：GenerateReply → domain.Agent
 │   │   ├── memory/                 #   上下文窗口 + 群画像缓存 + 窗口压缩（P3-001/002/003 已实现；成员画像已移除）
 │   │   ├── plugin/                 #   插件发现/加载/路由分发（P4-002）
-│   │   └── control/                #   触发判断 + 状态规则（P5-001/002，判定/记账，不发送——发送归 event respond）
+│   │   ├── control/                #   触发判断 + 状态规则（P5-001/002，判定/记账，不发送——发送归 event respond）
+│   │   └── log/                    #   日志查询服务 logsvc（P7-002：参数归一后转调 domain.LogReader；包名 logsvc 避免与 stdlib log 混淆）
 │   ├── handler/                    # 事件处理入口（薄胶水，无业务逻辑）
 │   │   ├── message.go              #   消息事件 → event service
 │   │   └── notice.go               #   通知事件 → 规则处理（stub）
@@ -221,10 +223,11 @@ plumebot/
 │       ├── ai/                     #   eino Agent + 摘要器实现（P2-004 provider 注册中心 + 多模态转换 + tool 机制；P3-003 Summarizer 裸模型单次调用；P3-004 tools/ 记忆更新工具）
 │       ├── sqlite/                 #   SQLite 存储实现（已接入：P2-001，8 张表 + migrations；member_profile/plugin_config 已移除，persona 为 agent 绑定人格模板）
 │       │   └── migrations/        #     DDL 迁移文件（001 单文件，migrate 全量执行）
+│       └── logfile/                #   日志文件读取（P7-002：domain.LogReader 实现，纯标准库读 zap JSON 日志 + 滚动备份，目录经构造注入）
 ├── plugin-sdk/                     #   独立 SDK module（P6-004）：entity 协议 wire 类型 + plugin go-plugin 接线（宿主 replace 本地）
 ├── pkg/                            # 可复用工具
 │   ├── config/                     #   配置加载（嵌入默认模板 config.default.yaml）
-│   ├── logger/                     #   全局 zap 日志
+│   ├── logger/                     #   全局 zap 日志（另提供 Context/From 的 ctx 注入派生 logger = trace_id 机制，见架构 §17.6）
 │   └── ahocorasick/                #   Aho-Corasick 多模式匹配（敏感词）
 ├── plugins/                        # 插件目录（运行时，插件子进程可执行文件）
 ├── data/                           # SQLite 自动生成（运行时创建）
@@ -356,7 +359,7 @@ domain 零依赖
 - `HandleMessage(ctx, msg) error`，中间件命中返回哨兵错误（`domain.ErrRateLimited` / `domain.SensitiveWordError`）；
 - 限流：`golang.org/x/time/rate` 令牌桶，按群（私聊按用户）独立，超时返回 `ErrRateLimited`；
 - 敏感词：`pkg/ahocorasick` 匹配，空词表 = 不过滤；
-- 日志规范（完整版见架构 §17 日志规范）：消息日志为**两条锚点**——入口行 `Info("收到消息", message_id, group_id, user_id, message_type, content, mentioned)` + 结局行 `logOutcome(msg, outcome…)`（`Info|Warn("消息结局", …, outcome)`，每条消息**恰好**一入口一结局）；日志不重复（infra/onebot 不再打消息 Info；群管理审计只落 `GroupManager.Execute`；发送成功只 Debug；详情作结局行字段）；结局 outcome 枚举与级别见架构 §17.4；等级语义见 §17.3；输出形态见 §17.1（按精确级别分文件 debug/info/warn/error + fatal.log + gin.log，仅文件不写终端，lumberjack 10MB 滚动）；审计与敏感信息（密钥/token/密码绝不入日志）见 §17.5；**代码落地状态见 roadmap B-046（现状部分未落地，接入新日志以本规范为准绳）**；
+- 日志规范（完整版见架构 §17 日志规范）：消息日志为**两条锚点**——入口行 `Info("收到消息", message_id, group_id, user_id, message_type, content, mentioned)` + 结局行 `logOutcome(ctx, msg, outcome…)`（`Info|Warn("消息结局", …, outcome)`，每条消息**恰好**一入口一结局）；日志不重复（infra/onebot 不再打消息 Info；群管理审计只落 `GroupManager.Execute`；发送成功只 Debug；详情作结局行字段）；结局 outcome 枚举与级别见架构 §17.4；等级语义见 §17.3；输出形态见 §17.1（按精确级别分文件 debug/info/warn/error + fatal.log + gin.log，仅文件不写终端，lumberjack 10MB 滚动）；审计与敏感信息（密钥/token/密码绝不入日志）见 §17.5；**trace_id 经 `logger.Context/From` 注入 ctx**（管理端=IP、QQ=group:/private: 会话键，见 §17.6），入口行/结局行/审计/模型度量经 `logger.From(ctx)` 输出以便按会话检索；代码落地状态见 roadmap B-046 与 P7-002（均已落地）；
 - 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录；校验通过且含 `Reply` 时经 ctx 内 domain.Sender 发送，B-017，见架构 §10.2）；最后对普通消息走 P6-002 回复闭环 respond（P5-001/002 触发判断 + 状态规则命中 → BuildMessages 拼 prompt → Agent GenerateReply（记忆工具经 ctx Session 写入）→ 经 domain.Sender 发送 → 发送成功才窗口追加 bot 回复 + OnReplied 记账，B-038，见架构 §14.4）。
 
 ### 6.4 internal/handler/
@@ -378,6 +381,7 @@ domain 零依赖
 - `onebot/`：已接入（matcher 注册 + 事件转换 + 固定文案回复）；已实现、有单测。
 - `sqlite/`：已接入（P2-001，8 张表 + migrations；member_profile/plugin_config 已移除，persona 为 agent 绑定人格模板）。
 - `ai/`：已接入（P2-004：Registry provider 注册中心 + openai 兼容工厂 + EinoAgent + 多模态转换，正式单测全绿；P3-004：`ai/tools` 记忆更新工具 store_fact/learn_jargon/forget_fact，会话身份经 `entity.Session` 注入 ctx）。
+- `logfile/`：已接入（P7-002：`domain.LogReader` 实现，纯标准库读 `~/.plumebot/logs` 下的 zap JSON 日志与 lumberjack 滚动备份，支持等级 × 时间段 × trace_id + 分页；gin.log 文本不纳入，见架构 §17.6）。
 - `plugin-sdk/`（根目录，独立 module，P6-004）：插件协议 wire 类型（`plugin-sdk/entity`）+ go-plugin net/rpc 接线（`plugin-sdk/plugin`：插件侧 `Serve` + 宿主侧 `NewClient`，宿主侧 `Client` 结构化满足 `domain.Plugin`）。宿主 `internal/domain/entity` 协议类型为 SDK 类型别名；第三方插件只依赖 SDK。
 
 每个 infra 包必须：

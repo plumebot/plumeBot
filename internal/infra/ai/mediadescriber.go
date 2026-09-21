@@ -91,17 +91,18 @@ func NewMediaDescriber(ctx context.Context, cfg config.Config) (domain.MediaDesc
 // 日志：缓存命中/冷却命中 Debug、视觉调用记模型调用度量 Info（架构 §17.2 infra/ai）—
 // 排障「图片一直是 [图片]」有依据（缓存失效、合并接口不可达、视觉调用失败一目了然）。
 func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPart) (string, error) {
+	l := logger.From(ctx) // 携带 trace_id（会话键）；未注入时回退全局
 	key := imageContentKey(part)
 	if key != "" {
 		d.mu.Lock()
 		if desc, ok := d.cache[key]; ok {
 			d.mu.Unlock()
-			logger.Debug("图片描述缓存命中", logger.S("key", key))
+			l.Debug("图片描述缓存命中", logger.S("key", key))
 			return desc, nil
 		}
 		if retryAt, ok := d.fails[key]; ok && time.Now().Before(retryAt) {
 			d.mu.Unlock()
-			logger.Debug("图片描述失败冷却命中（BUG-3）",
+			l.Debug("图片描述失败冷却命中（BUG-3）",
 				logger.S("key", key), logger.S("retry_after", descRetryAfter.String()))
 			return "", fmt.Errorf("图片描述在失败冷却中（BUG-3，%s 内重试）: %s", descRetryAfter, key)
 		}
@@ -112,7 +113,7 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 	data, mime, err := loadImageBytes(ctx, d.http, part)
 	if err != nil {
 		d.markFail(key)
-		logger.Warn("图片描述拉取失败",
+		l.Warn("图片描述拉取失败",
 			logger.S("key", key), logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(err))
 		return "", fmt.Errorf("加载图片失败: %w", err)
 	}
@@ -138,7 +139,7 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 	if err != nil {
 		d.markFail(key)
 		fields = append(fields, logger.Err(err))
-		logger.Warn("图片描述模型调用失败", fields...)
+		l.Warn("图片描述模型调用失败", fields...)
 		return "", fmt.Errorf("视觉推理失败: %w", err)
 	}
 	if out.ResponseMeta != nil && out.ResponseMeta.Usage != nil {
@@ -148,7 +149,7 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 			logger.I("completion_tokens", u.CompletionTokens),
 			logger.I("total_tokens", u.TotalTokens))
 	}
-	logger.Info("模型调用", fields...)
+	l.Info("模型调用", fields...)
 
 	// 只缓存成功结果（失败走 markFail 冷却）。
 	if key != "" && out.Content != "" {

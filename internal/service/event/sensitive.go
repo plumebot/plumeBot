@@ -29,7 +29,7 @@ func sensitiveWordMiddleware(filter *sensitiveWordFilter) Middleware {
 			if !ok {
 				return next(ctx, msg)
 			}
-			logOutcome(msg, OutcomeSensitive, logger.S("word", word))
+			logOutcome(ctx, msg, OutcomeSensitive, logger.S("word", word))
 			return &domain.SensitiveWordError{Word: word}
 		}
 	}

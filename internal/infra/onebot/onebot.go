@@ -12,6 +12,7 @@ import (
 	"github.com/wdvxdr1123/ZeroBot/driver"
 
 	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler"
 	"plumebot/internal/infra/imagecache"
 	"plumebot/pkg/config"
@@ -75,22 +76,25 @@ func (c *Client) registerMatchers() {
 		// 需回复的环节（agent 回复、插件回复）经 SenderFrom(ctx).Send 直接发送，Handler 链签名不变。
 		// B-015：同构注入 per-event 的 domain.GroupManager（群管理动作，工具层/插件 Actions 共用
 		// 执行路径），护栏（per-group 开关 + 管理员校验）在其 Execute 内集中把关。
+		// trace_id：把本条会话的派生 logger 注入 ctx（架构 §17.6），使入口行/结局行/模型调用/
+		// 群管理审计在日志浏览页可按会话一键串联（管理端同理由 gin 中间件注入 IP）。
 		// 消息日志统一由 service/event 日志中间件记录，这里不重复打 Info。
 		sendCtx := domain.WithSender(context.Background(), newSender(ctx))
 		sendCtx = domain.WithGroupManager(sendCtx, newGroupManager(ctx, c.store, c.botID))
+		sendCtx = logger.Context(sendCtx, logger.S("trace_id", msgTraceID(msg)))
 		if err := c.msg.Handle(sendCtx, msg); err != nil {
 			if reply := decideReply(err); reply != "" {
 				// ctx.Send 自动回事件来源（群回群、私聊回私聊）。发送成功只 Debug
 				//（结局已由 service/event 的 rate_limited/sensitive 记 Warn，不重复）；
 				// 失败告警（原「由 ZeroBot 内部记录」兜底保留，但显式记录便于恢复固定文案链路）。
 				ctx.Send(reply)
-				logger.Debug("固定文案已发送（限流/敏感词）",
+				logger.From(sendCtx).Debug("固定文案已发送（限流/敏感词）",
 					logger.S("message_id", msg.MessageID),
 					logger.S("group_id", msg.GroupID),
 					logger.S("user_id", msg.UserID))
 				return
 			}
-			logger.Warn("消息处理失败", logger.Err(err))
+			logger.From(sendCtx).Warn("消息处理失败", logger.Err(err))
 		}
 	})
 
@@ -108,6 +112,16 @@ func (c *Client) registerMatchers() {
 			logger.S("meta_event_type", ctx.Event.RawEvent.Get("meta_event_type").String()),
 		)
 	})
+}
+
+// msgTraceID 返回消息的会话级 trace_id（架构 §17.6）：群聊 "group:<群号>"、私聊
+// "private:<对方QQ号>"，与「管理端 trace_id = 客户端 IP」构成两类可检索来源。
+// 带前缀使同一号码在群/私聊两种语境下不混淆。
+func msgTraceID(msg entity.Message) string {
+	if msg.GroupID != "" {
+		return "group:" + msg.GroupID
+	}
+	return "private:" + msg.UserID
 }
 
 // decideReply 根据管线返回的错误决定回复文案；不需要回复时返回空串。

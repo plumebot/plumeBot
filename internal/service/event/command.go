@@ -52,13 +52,13 @@ func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) 
 	})
 	switch {
 	case err == nil:
-		logOutcome(msg, OutcomeCommand, logger.S("command", cmd),
+		logOutcome(ctx, msg, OutcomeCommand, logger.S("command", cmd),
 			logger.S("reply_segments", replySegmentSummary(res.Reply)),
 			logger.S("actions", groupActionSummary(res.Actions)))
 		// B-017：校验通过后执行回复发送（失败仅告警，命令分支吞错误语义维持现状）。
 		if res.Reply != nil {
 			if err := s.sendReply(ctx, *res.Reply); err != nil {
-				logger.Warn("插件回复发送失败", logger.S("command", cmd), logger.Err(err))
+				logger.From(ctx).Warn("插件回复发送失败", logger.S("command", cmd), logger.Err(err))
 			}
 		}
 		// B-015：校验通过后执行群管理动作（Actions）——与 AI 工具共用 domain.GroupManager
@@ -67,14 +67,14 @@ func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) 
 		// 此处不重复。
 		if len(res.Actions) > 0 {
 			if err := s.executeActions(ctx, res.Actions); err != nil {
-				logger.Warn("插件群管理动作执行失败", logger.S("command", cmd), logger.Err(err))
+				logger.From(ctx).Warn("插件群管理动作执行失败", logger.S("command", cmd), logger.Err(err))
 			}
 		}
 	case errors.Is(err, domain.ErrNotFound):
 		// 未找到插件命令：命令消息已消费（防 confess 提示），记 Info 结局（架构 §17.4）。
-		logOutcome(msg, OutcomeCommandNotFound, logger.S("command", cmd))
+		logOutcome(ctx, msg, OutcomeCommandNotFound, logger.S("command", cmd))
 	default:
-		logOutcome(msg, OutcomeCommandError, logger.S("command", cmd), logger.Err(err))
+		logOutcome(ctx, msg, OutcomeCommandError, logger.S("command", cmd), logger.Err(err))
 	}
 	return true, nil // 命令分支吞错误只记日志（维持现状），始终 handled
 }
@@ -93,9 +93,9 @@ func (s *EventService) handleHelpCommand(ctx context.Context, msg entity.Message
 	if err := s.sendReply(ctx, entity.Reply{
 		Segments: []entity.Segment{{Kind: entity.SegmentKindText, Text: text}},
 	}); err != nil {
-		logger.Warn("help 回复发送失败", logger.Err(err))
+		logger.From(ctx).Warn("help 回复发送失败", logger.Err(err))
 	}
-	logOutcome(msg, OutcomeCommand, logger.S("command", "help"))
+	logOutcome(ctx, msg, OutcomeCommand, logger.S("command", "help"))
 	return true
 }
 

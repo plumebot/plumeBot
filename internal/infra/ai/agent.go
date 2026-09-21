@@ -72,11 +72,14 @@ func NewEinoAgent(ctx context.Context, cm model.BaseChatModel, tools []tool.Base
 // 每次调用记模型调用度量（架构 §17.2）：model、latency_ms、prompt/completion tokens
 //（eino ResponseMeta.Usage，模型实现未返回时缺省）；失败也记 Warn（排障 AI 回复有依据）。
 func (e *EinoAgent) Generate(ctx context.Context, msgs []entity.ChatMessage) (string, error) {
+	// ctx 内派生 logger 携带 trace_id（会话键，架构 §17.6）：模型调用可在日志浏览页
+	// 与同会话的消息入口/结局行串联；未注入时 From 回退全局。
+	l := logger.From(ctx)
 	start := time.Now()
 
 	schemaMsgs, err := ToSchema(msgs)
 	if err != nil {
-		logger.Warn("模型调用失败",
+		l.Warn("模型调用失败",
 			logger.S("model", e.model),
 			logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(err))
 		return "", err
@@ -91,7 +94,7 @@ func (e *EinoAgent) Generate(ctx context.Context, msgs []entity.ChatMessage) (st
 			break
 		}
 		if ev.Err != nil {
-			logger.Warn("模型调用失败",
+			l.Warn("模型调用失败",
 				logger.S("model", e.model),
 				logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(ev.Err))
 			return "", ev.Err
@@ -101,7 +104,7 @@ func (e *EinoAgent) Generate(ctx context.Context, msgs []entity.ChatMessage) (st
 		}
 	}
 	if last == nil {
-		logger.Warn("模型调用失败",
+		l.Warn("模型调用失败",
 			logger.S("model", e.model),
 			logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(errNoModelOutput))
 		return "", errNoModelOutput
@@ -117,6 +120,6 @@ func (e *EinoAgent) Generate(ctx context.Context, msgs []entity.ChatMessage) (st
 			logger.I("completion_tokens", u.CompletionTokens),
 			logger.I("total_tokens", u.TotalTokens))
 	}
-	logger.Info("模型调用", fields...)
+	l.Info("模型调用", fields...)
 	return FromSchema(last), nil
 }

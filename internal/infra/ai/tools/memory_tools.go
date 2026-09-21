@@ -112,10 +112,10 @@ func (m *MemoryTools) storeFact(ctx context.Context, args storeFactArgs) (string
 		uid = session.UserID
 	}
 	if err := m.store.AddMemberFact(ctx, session.GroupID, uid, args.Fact); err != nil {
-		logMemoryWrite("store_fact", session, uid, args.Fact, err)
+		logMemoryWrite(ctx, "store_fact", session, uid, args.Fact, err)
 		return "", fmt.Errorf("写入事实失败: %w", err)
 	}
-	logMemoryWrite("store_fact", session, uid, args.Fact, nil)
+	logMemoryWrite(ctx, "store_fact", session, uid, args.Fact, nil)
 	return fmt.Sprintf("已记住：%s 的事实「%s」", uid, args.Fact), nil
 }
 
@@ -129,10 +129,10 @@ func (m *MemoryTools) learnJargon(ctx context.Context, args learnJargonArgs) (st
 		return "", errors.New("仅群聊可学习黑话（当前会话无群 ID）")
 	}
 	if err := m.store.AddJargon(ctx, session.GroupID, args.Jargon); err != nil {
-		logMemoryWrite("learn_jargon", session, "", args.Jargon, err)
+		logMemoryWrite(ctx, "learn_jargon", session, "", args.Jargon, err)
 		return "", fmt.Errorf("学习黑话失败: %w", err)
 	}
-	logMemoryWrite("learn_jargon", session, "", args.Jargon, nil)
+	logMemoryWrite(ctx, "learn_jargon", session, "", args.Jargon, nil)
 	return fmt.Sprintf("已学习黑话「%s」，状态：待确认", args.Jargon), nil
 }
 
@@ -147,16 +147,18 @@ func (m *MemoryTools) forgetFact(ctx context.Context, args forgetFactArgs) (stri
 		uid = session.UserID
 	}
 	if err := m.store.DeleteMemberFact(ctx, session.GroupID, uid, args.Fact); err != nil {
-		logMemoryWrite("forget_fact", session, uid, args.Fact, err)
+		logMemoryWrite(ctx, "forget_fact", session, uid, args.Fact, err)
 		return "", fmt.Errorf("删除事实失败: %w", err)
 	}
-	logMemoryWrite("forget_fact", session, uid, args.Fact, nil)
+	logMemoryWrite(ctx, "forget_fact", session, uid, args.Fact, nil)
 	return fmt.Sprintf("已删除事实「%s」", args.Fact), nil
 }
 
 // logMemoryWrite 记录记忆工具写库审计（架构 §17.5）：成功 Info / 失败 Warn，
 // 带会话归属（group_id/actor）与写入对象。AI 学到黑话/事实可追溯。
-func logMemoryWrite(kind string, session entity.Session, uid, target string, err error) {
+// ctx 内派生 logger 携带 trace_id（会话键），写入可在日志浏览页按会话串联（架构 §17.6）。
+func logMemoryWrite(ctx context.Context, kind string, session entity.Session, uid, target string, err error) {
+	l := logger.From(ctx)
 	fields := []zap.Field{
 		logger.S("tool", kind),
 		logger.S("group_id", session.GroupID),
@@ -170,8 +172,8 @@ func logMemoryWrite(kind string, session entity.Session, uid, target string, err
 	}
 	if err != nil {
 		fields = append(fields, logger.Err(err))
-		logger.Warn("记忆写入失败", fields...)
+		l.Warn("记忆写入失败", fields...)
 		return
 	}
-	logger.Info("记忆写入", fields...)
+	l.Info("记忆写入", fields...)
 }

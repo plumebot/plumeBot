@@ -180,7 +180,7 @@ func (s *Storage) UpdateAdminUserPassword(ctx context.Context, username, hash st
 }
 
 // isUniqueConstraint 判断 modernc 驱动的 UNIQUE 约束冲突：主/扩展码 + 消息双重校验
-//（驱动 Error.Code() 为主码 SQLITE_CONSTRAINT=19 或扩展码 SQLITE_CONSTRAINT_UNIQUE=2067，
+// （驱动 Error.Code() 为主码 SQLITE_CONSTRAINT=19 或扩展码 SQLITE_CONSTRAINT_UNIQUE=2067，
 // 消息含 "UNIQUE constraint failed"，见 modernc.org/sqlite v1.55.0）。
 func isUniqueConstraint(err error) bool {
 	var se *sqlitedrv.Error

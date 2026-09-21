@@ -640,7 +640,8 @@ Ctrl+C 直接终止进程（防卡死）。
 ### 17.1 输出形态与文件布局
 
 - 技术栈：`pkg/logger`（uber/zap 结构化 JSON + lumberjack 按**大小**滚动）。全局单例，**只写文件，不写终端**。
-- 目录：`~/.plumebot/logs/`（`os.UserHomeDir()/.plumebot/logs`，可由 `logger.Config.Dir` 覆盖）。
+- 目录：`~/.plumebot/logs/`（`os.UserHomeDir()/.plumebot/logs`，可由 `logger.Config.Dir` 覆盖；
+  实际生效路径经 `logger.Dir()` 取用，管理后端的日志浏览据此构造读取器，见 §17.6）。
 - 滚动策略统一：单文件 10MB 切分 / 保留 5 备份 / 30 天（lumberjack `MaxSize/MaxBackups/MaxAge`）。
 - 按**精确级别分文件**（`levelGate` 只收该精确级别，不是 ≥ 聚合）：
 
@@ -696,8 +697,9 @@ Ctrl+C 直接终止进程（防卡死）。
 
 - `service/event` 日志中间件（`logMiddleware`）打**入口行**：
   `Info("收到消息", message_id, group_id, user_id, message_type, content, mentioned)`。
-- 管线的**每个终局分叉**打一条**结局行**，统一签名 `logOutcome(msg, outcome, …)`：
+- 管线的**每个终局分叉**打一条**结局行**，统一签名 `logOutcome(ctx, msg, outcome, …)`：
   `Info|Warn("消息结局", message_id, group_id, user_id, outcome, …)`——正常结局 Info、异常结局 Warn。
+  经 `logger.From(ctx)` 输出，故结局行自带 trace_id（§17.6，会话键）。
 - 结局 `outcome` 枚举：
 
 | outcome | 级别 | 说明 |
@@ -723,3 +725,51 @@ Ctrl+C 直接终止进程（防卡死）。
   （开关关 / 非管理员 / 时长钳制）Warn。
 - **记忆工具写库**（store_fact / learn_jargon / forget_fact）：成功 Info / 失败 Warn，带会话归属。
 - **绝不入日志**：API key、JWT 密钥、密码、token——只标 `api_key_set: true/false`，只记录环境变量**名**不记录值。
+
+### 17.6 日志浏览（管理后端）
+
+管理控制台内置日志浏览页，直接读 §17.1 的 JSON 日志文件，免登服务器查日志。
+
+**trace_id 注入机制**（`pkg/logger` 提供，任何层可用，不依赖 service/admin）：
+
+| 来源 | trace_id 取值 | 注入点 |
+|---|---|---|
+| 管理端 HTTP 请求 | 客户端 IP（原值） | `handler/web.withClientIP`：`logger.Context(ctx, S("trace_id", ip))` |
+| QQ 群消息 | `group:<群号>` | `infra/onebot` matcher 闭包构造事件 ctx 时注入 |
+| QQ 私聊消息 | `private:<对方QQ号>` | 同上 |
+
+- `logger.Context(ctx, fields...)` 注入派生 logger（`zl.With(fields...)`）；`logger.From(ctx)` 取出，
+  未注入时**回退全局 logger**（故存量调用无需一次改完，可渐进接入）。
+- 已接入 trace_id 的行（关键路径）：消息入口行与结局行（`logOutcome` 带 ctx）、命令/限流/敏感词拦截、
+  插件回复失败、固定文案发送、群管理动作审计、记忆工具写库、三类模型调用度量（agent/摘要/图片描述）、
+  admin 审计与登录注册改密。**其余人工 Debug 细节行不带 trace_id**（覆盖范围以本节为准）。
+- 一次会话的全部动态因此可在浏览页按 trace_id 一键串联（入口行 → 结局行 → 模型调用 → 群管理动作）。
+
+**读取实现**（`internal/infra/logfile`，纯标准库零依赖）：
+
+- 目录经构造函数注入（`logfile.New(dir)`，main 传 `logger.Dir()`）；只匹配 `<level>.log` 与
+  lumberjack 备份名 `<level>-<时间戳>.log`，**`gin.log`（文本格式）不纳入浏览**。
+- 策略：按文件 mtime 降序扫描 → 文件内从末行向前 → 行 `ts < begin` 停止读该文件 → 收集
+  `offset+limit+1` 条即止 → 按 ts 稳定排序切页（不依赖文件系统时间戳精度）。单文件 ≤10MB。
+- 损坏/非 JSON 行静默跳过；目录不存在返回空页（首次运行不报错）。
+
+**接口契约**（`GET /api/v1/logs`，已鉴权 + 每 IP 限流）：
+
+| 参数 | 说明 |
+|---|---|
+| `levels` | csv：`info,warn,error,debug`；缺省 = 全部；**`error` 语义含 `fatal.log`**（fatal 并入错误展示） |
+| `trace_id` | 精确匹配 |
+| `begin` / `end` | RFC3339，可缺省 |
+| `limit` / `offset` | 缺省 200 / 上限 1000，offset ≥ 0 |
+
+- 返回：`{code:0, data:{items:[{ts,level,message,trace_id,fields}], has_more}}`（items 最新在前）。
+- 参数非法一律 400（不静默忽略，避免前端以为筛选生效却看到全量）。
+- 分层：`domain.LogReader`（接口，domain 层只放接口）← `infra/logfile`（实现）；查询条件与结果类型
+  `entity.LogQuery`/`LogEntry`/`LogPage` 归 entity；`service/log`（logsvc，参数归一）←
+  `handler/web.LogHandler`（独立于 admin.Service）。
+- 全接口限流：`verifyAuth` 之后统一挂 `apiLimiter`（10/s、burst 30），注册/登录沿用更紧的
+  `authLimiter`（2/s、burst 10）。
+
+**前端交互**（`static/index.html` 日志 tab）：四个等级开关**只切换渲染**（各等级结果前端缓存，
+不发请求），trace_id/时间范围为「待应用条件」，「刷新」才按当前开启等级统一重查，逐等级「加载更多」
+按 offset 追加——避免开关抖动打爆后端（日志读取为多文件扫描，代价高于普通配置读写）。

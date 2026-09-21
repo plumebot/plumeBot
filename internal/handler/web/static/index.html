@@ -38,6 +38,36 @@
   .hidden { display: none !important; }
   .inline { display: inline-block !important; width: auto !important; }
   .muted { color: #999; font-size: 12px; }
+
+  /* ── 日志浏览 ── */
+  .lv-chip { display: inline-block; padding: 4px 12px; border-radius: 14px; border: 1px solid #d9dce1;
+             background: #fff; color: #888; font-size: 12px; cursor: pointer; user-select: none; margin-right: 6px; }
+  .lv-chip.on { color: #fff; }
+  .lv-chip.on[data-lv="info"] { background: #4b6eaf; border-color: #4b6eaf; }
+  .lv-chip.on[data-lv="warn"] { background: #d68a1e; border-color: #d68a1e; }
+  .lv-chip.on[data-lv="error"] { background: #c25050; border-color: #c25050; }
+  .lv-chip.on[data-lv="debug"] { background: #7d8694; border-color: #7d8694; }
+  #log-list { margin-top: 10px; font-size: 12px; }
+  .log-row { padding: 6px 8px; border-bottom: 1px solid #eceef1; border-left: 3px solid transparent; cursor: pointer; }
+  .log-row.lv-info { border-left-color: #4b6eaf; }
+  .log-row.lv-warn { border-left-color: #d68a1e; }
+  .log-row.lv-error, .log-row.lv-fatal { border-left-color: #c25050; }
+  .log-row.lv-debug { border-left-color: #7d8694; }
+  .log-row:hover { background: #f7f8fa; }
+  .log-ts { color: #9aa3ad; font-family: Consolas, monospace; margin-right: 8px; }
+  .log-badge { display: inline-block; width: 46px; text-align: center; border-radius: 4px; color: #fff;
+               margin-right: 8px; font-size: 11px; padding: 1px 0; }
+  .log-badge.lv-info { background: #4b6eaf; }
+  .log-badge.lv-warn { background: #d68a1e; }
+  .log-badge.lv-error, .log-badge.lv-fatal { background: #c25050; }
+  .log-badge.lv-debug { background: #7d8694; }
+  .log-fields { display: none; margin: 6px 0 2px 62px; color: #667; font-family: Consolas, monospace; word-break: break-all; }
+  .log-row.open .log-fields { display: block; }
+  .log-trace { color: #4b6eaf; cursor: pointer; text-decoration: underline; }
+  /* 分页栏：每页固定条数，避免一次渲染几百行拖成长条。 */
+  #log-pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  #log-pager button { margin: 0; }
+  #log-pager button:disabled { opacity: .45; cursor: default; }
 </style>
 </head>
 <body>
@@ -52,6 +82,7 @@
     <span class="op" onclick="showTab('jargon')">黑话</span>
     <span class="op" onclick="showTab('facts')">成员事实</span>
     <span class="op" onclick="showTab('state')">运行态</span>
+    <span class="op" onclick="showTab('logs')">日志</span>
     <span class="op" onclick="showTab('pwd')">改密</span>
     <span class="op" onclick="logout()">退出</span>
   </div>
@@ -164,6 +195,41 @@
     </div>
   </section>
 
+  <section id="tab-logs" class="hidden">
+    <div class="card">
+      <h2>日志浏览</h2>
+      <div style="margin:10px 0">
+        <span class="lv-chip" data-lv="info" onclick="toggleLogLevel('info')">info</span>
+        <span class="lv-chip" data-lv="warn" onclick="toggleLogLevel('warn')">warn</span>
+        <span class="lv-chip" data-lv="error" onclick="toggleLogLevel('error')">error</span>
+        <span class="lv-chip" data-lv="debug" onclick="toggleLogLevel('debug')">debug</span>
+      </div>
+      <div class="row">
+        <div><label>时间范围</label>
+          <select id="log-range">
+            <option value="all">全部</option>
+            <option value="15m">最近 15 分钟</option>
+            <option value="1h">最近 1 小时</option>
+            <option value="today">今天</option>
+          </select>
+        </div>
+        <div><label>trace_id（管理端=IP；群=group:群号；私聊=private:QQ）</label>
+          <input id="log-trace" placeholder="如 group:123456789">
+        </div>
+      </div>
+      <button onclick="refreshLogs()">刷新</button>
+      <button class="gray" onclick="clearLogFilters()">清空筛选</button>
+      <span class="muted" id="log-hint">开关只切换显示，点「刷新」才重新查询</span>
+      <div id="log-list"></div>
+      <div id="log-pager" class="hidden">
+        <button class="gray" id="log-prev" onclick="logPage(-1)">← 上一页</button>
+        <span id="log-pageinfo" class="muted"></span>
+        <button class="gray" id="log-next" onclick="logPage(1)">下一页 →</button>
+        <button class="gray" id="log-more" onclick="loadMoreLogs()">加载更早</button>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-pwd" class="hidden">
     <div class="card">
       <h2>修改密码</h2>
@@ -255,10 +321,11 @@ function enterApp(token) {
 function logout() { showAuth(); }
 
 function showTab(name) {
-  ['cfg','persona','profile','jargon','facts','state','pwd'].forEach(n => $('tab-' + n).classList.add('hidden'));
+  ['cfg','persona','profile','jargon','facts','state','pwd','logs'].forEach(n => $('tab-' + n).classList.add('hidden'));
   $('tab-' + name).classList.remove('hidden');
   if (name === 'cfg') loadCfgs();
   if (name === 'persona') loadPersonas();
+  if (name === 'logs') refreshLogs(); // 首次进入拉一次；此后仅「刷新」按钮触发查询
 }
 
 // ── 群配置 ──
@@ -484,6 +551,132 @@ async function loadState() {
   }
 }
 
+// ── 日志浏览 ──
+// 交互约定（架构 §17.6）：等级开关**只切换渲染**（读各等级缓存，不发请求）——避免反复开/关
+// 打爆后端；trace_id/时间范围为「待应用条件」，点「刷新」才按当前开启等级统一重查。
+// 展示分页（每页 LOG_PAGE_SIZE 条）：翻页只是在缓存上切片重渲染，**不发请求**；
+// 需要更早历史时点「加载更早」按 offset 追加一页数据（后端分页见 §17.6 接口契约）。
+const LOG_LEVELS = ['info', 'warn', 'error', 'debug']; // 展示顺序 = 默认开启顺序
+const LOG_PAGE_SIZE = 50;                              // 单页条数
+const logState = { on: new Set(['info', 'warn', 'error']), cache: {}, more: {}, page: 1 };
+
+function toggleLogLevel(lv) {
+  if (logState.on.has(lv)) logState.on.delete(lv); else logState.on.add(lv);
+  document.querySelectorAll('.lv-chip').forEach(el => el.classList.toggle('on', logState.on.has(el.dataset.lv)));
+  logState.page = 1; // 等级集合变了，合并列表随之变化，回到第一页
+  renderLogs();      // 仅重渲染缓存，不查询
+}
+function logRange() {
+  const v = $('log-range').value;
+  if (v === 'all') return {};
+  const now = new Date();
+  if (v === 'today') { const d = new Date(now); d.setHours(0, 0, 0, 0); return { begin: d.toISOString() }; }
+  return { begin: new Date(now.getTime() - (v === '15m' ? 15 : 60) * 60000).toISOString() };
+}
+async function refreshLogs() {
+  const levels = LOG_LEVELS.filter(l => logState.on.has(l));
+  logState.cache = {}; logState.more = {}; logState.page = 1;
+  if (!levels.length) { renderLogs(); return; }
+  const range = logRange(), trace = $('log-trace').value.trim();
+  try {
+    await Promise.all(levels.map(async lv => {
+      const d = await fetchLogs(lv, range, trace, 0);
+      logState.cache[lv] = d.items || [];
+      logState.more[lv] = !!d.has_more;
+    }));
+    renderLogs();
+    flash('日志已刷新：' + levels.join('/'), true);
+  } catch (e) { flash(e.message); }
+}
+// loadMoreLogs 为每个仍有更多历史的等级追加一页（offset = 已缓存条数）。
+async function loadMoreLogs() {
+  const levels = LOG_LEVELS.filter(l => logState.on.has(l) && logState.more[l]);
+  if (!levels.length) return flash('没有更早的日志了');
+  const range = logRange(), trace = $('log-trace').value.trim();
+  try {
+    for (const lv of levels) {
+      const d = await fetchLogs(lv, range, trace, (logState.cache[lv] || []).length);
+      logState.cache[lv] = (logState.cache[lv] || []).concat(d.items || []);
+      logState.more[lv] = !!d.has_more;
+    }
+    renderLogs();
+    flash('已加载更早的日志', true);
+  } catch (e) { flash(e.message); }
+}
+function fetchLogs(lv, range, trace, offset) {
+  const p = new URLSearchParams({ levels: lv, limit: '200', offset: String(offset) });
+  if (range.begin) p.set('begin', range.begin);
+  if (trace) p.set('trace_id', trace);
+  return api('/logs?' + p.toString());
+}
+function clearLogFilters() {
+  $('log-trace').value = ''; $('log-range').value = 'all';
+  refreshLogs();
+}
+// mergeLogs 合并各等级缓存（各自主库已倒序）并按时间倒序——分页与渲染的共同数据源。
+function mergeLogs() {
+  const all = [];
+  LOG_LEVELS.filter(l => logState.on.has(l)).forEach(lv => {
+    (logState.cache[lv] || []).forEach(e => all.push(e));
+  });
+  all.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  return all;
+}
+// renderLogs 渲染当前页；翻页/开关都只走这里，不触达后端。
+function renderLogs() {
+  const list = $('log-list'), pager = $('log-pager');
+  if (!logState.on.size) {
+    list.innerHTML = '<div class="muted">未开启任何等级</div>';
+    pager.classList.add('hidden');
+    return;
+  }
+  const all = mergeLogs();
+  const pages = Math.max(1, Math.ceil(all.length / LOG_PAGE_SIZE));
+  logState.page = Math.min(Math.max(1, logState.page), pages);
+  const start = (logState.page - 1) * LOG_PAGE_SIZE;
+  const slice = all.slice(start, start + LOG_PAGE_SIZE);
+  list.innerHTML = slice.length ? slice.map(logRow).join('')
+    : '<div class="muted">暂无日志（点「刷新」查询）</div>';
+
+  pager.classList.remove('hidden');
+  $('log-pageinfo').textContent = all.length
+    ? `第 ${logState.page}/${pages} 页 ｜ 本页 ${slice.length} 条 ｜ 已加载 ${all.length} 条`
+    : '无匹配日志';
+  $('log-prev').disabled = logState.page <= 1;
+  $('log-next').disabled = logState.page >= pages;
+  // 「加载更早」仅在最后一页出现，且仅在仍有未取回的历史时可点。
+  const lastPage = logState.page >= pages;
+  const more = LOG_LEVELS.some(l => logState.on.has(l) && logState.more[l]);
+  $('log-more').style.display = lastPage ? 'inline-block' : 'none';
+  $('log-more').disabled = !more;
+  $('log-more').textContent = more ? '加载更早' : '已到最早';
+}
+function logPage(delta) {
+  logState.page += delta;
+  renderLogs();
+  $('log-list').scrollIntoView({ block: 'nearest' }); // 翻页后回到列表顶部
+}
+function logRow(e) {
+  const lv = esc(e.level);
+  const fields = Object.entries(e.fields || {}).map(([k, v]) =>
+    `<div>${esc(k)}: ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`).join('');
+  const trace = e.trace_id
+    ? `<div>trace_id: <span class="log-trace" onclick="event.stopPropagation();filterByTrace('${escA(e.trace_id)}')">${esc(e.trace_id)}</span></div>` : '';
+  return `<div class="log-row lv-${lv}" onclick="this.classList.toggle('open')">
+    <span class="log-ts">${esc(fmtLogTS(e.ts))}</span><span class="log-badge lv-${lv}">${lv}</span>${esc(e.message)}
+    <div class="log-fields">${trace}${fields}</div></div>`;
+}
+function fmtLogTS(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return String(ts || '');
+  return d.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function filterByTrace(id) {
+  $('log-trace').value = id;
+  $('log-range').value = 'all'; // 追溯整条会话时不受时间窗限制
+  refreshLogs();
+}
+
 // ── 改密 ──
 async function changePassword() {
   try {
@@ -497,6 +690,7 @@ function esc(s) { return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;',
 function escA(s) { return esc(s).replace(/'/g, "\\'"); }
 
 // 启动
+document.querySelectorAll('.lv-chip').forEach(el => el.classList.toggle('on', logState.on.has(el.dataset.lv)));
 if (localStorage.getItem('plumebot_admin_token')) enterApp(localStorage.getItem('plumebot_admin_token'));
 else showAuth();
 </script>

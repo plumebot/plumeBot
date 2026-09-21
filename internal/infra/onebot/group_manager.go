@@ -49,6 +49,9 @@ func newGroupManager(ctx *zero.Ctx, store domain.Storage, botID int64) domain.Gr
 //（group_tools.go）与插件 Actions 层（command.go executeActions）均不重复记录；
 // 成功 Info、护栏拒绝/API 失败 Warn，均带 group_id/actor/op/target。
 func (m *botGroupManager) Execute(ctx context.Context, action entity.GroupAction) error {
+	// 审计经 ctx 内派生 logger（携带 trace_id=会话键，架构 §17.6）：群管理动作可在
+	// 日志浏览页与会话内其它行（消息入口/结局/模型调用）串联。
+	l := logger.From(ctx)
 	groupID := m.ctx.Event.GroupID
 	actor := m.ctx.Event.UserID // 触发者（per-event）即动作执行者
 	baseFields := []zap.Field{
@@ -62,34 +65,34 @@ func (m *botGroupManager) Execute(ctx context.Context, action entity.GroupAction
 	}
 
 	if groupID == 0 {
-		logger.Warn("群管理动作被拒绝", append(baseFields, logger.Err(errors.New("仅支持群聊事件")))...)
+		l.Warn("群管理动作被拒绝", append(baseFields, logger.Err(errors.New("仅支持群聊事件")))...)
 		return errors.New("群管理动作仅支持群聊事件")
 	}
 	// 护栏 1：per-group 开关（默认开；无配置行 = 开，0 = 显式关闭，
 	// 见 entity.GroupConfig.GroupMgmtEnabled 注释）。
 	cfg, err := m.store.GetGroupConfig(ctx, strconv.FormatInt(groupID, 10))
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		logger.Warn("群管理动作失败", append(baseFields, logger.Err(err))...)
+		l.Warn("群管理动作失败", append(baseFields, logger.Err(err))...)
 		return fmt.Errorf("查询群配置失败: %w", err)
 	}
 	if cfg != nil && cfg.GroupMgmtEnabled == 0 {
-		logger.Warn("群管理动作被拒绝", append(baseFields, logger.S("reason", "group_mgmt_enabled=0"))...)
+		l.Warn("群管理动作被拒绝", append(baseFields, logger.S("reason", "group_mgmt_enabled=0"))...)
 		return errors.New("本群未开启群管理功能（group_mgmt_enabled=0），拒绝执行")
 	}
 	// 护栏 2：触发者与 bot 都须为群主/管理员（fail-closed：查询失败/无 role 一律拒绝）。
 	triggerer := m.ctx.Event.UserID
 	if !memberInfoIsAdmin(m.ctx.GetGroupMemberInfo(groupID, triggerer, true)) {
-		logger.Warn("群管理动作被拒绝", append(baseFields, logger.S("reason", "triggerer_not_admin"))...)
+		l.Warn("群管理动作被拒绝", append(baseFields, logger.S("reason", "triggerer_not_admin"))...)
 		return errors.New("仅群主/管理员可触发群管理动作")
 	}
 	if !memberInfoIsAdmin(m.ctx.GetGroupMemberInfo(groupID, m.botID, true)) {
-		logger.Warn("群管理动作被拒绝", append(baseFields, logger.S("reason", "bot_not_admin"))...)
+		l.Warn("群管理动作被拒绝", append(baseFields, logger.S("reason", "bot_not_admin"))...)
 		return errors.New("bot 非本群主/管理员，无法执行（请确认 bot 已设为管理员且 bot.self_id 已配置）")
 	}
 	// 护栏 3：动作映射（含 mute 时长钳制）+ API 响应检查。
 	actionName, params, err := onebotAction(groupID, action)
 	if err != nil {
-		logger.Warn("群管理动作被拒绝", append(baseFields, logger.S("reason", "invalid_action"), logger.Err(err))...)
+		l.Warn("群管理动作被拒绝", append(baseFields, logger.S("reason", "invalid_action"), logger.Err(err))...)
 		return err
 	}
 	start := time.Now()
@@ -97,11 +100,11 @@ func (m *botGroupManager) Execute(ctx context.Context, action entity.GroupAction
 	if rsp.Status != "ok" || rsp.RetCode != 0 {
 		fields := append(baseFields, logger.S("api_action", actionName),
 			logger.I64("retcode", rsp.RetCode), logger.S("message", rsp.Message))
-		logger.Warn("群管理动作失败", append(fields, logger.Err(errors.New(rsp.Wording)))...)
+		l.Warn("群管理动作失败", append(fields, logger.Err(errors.New(rsp.Wording)))...)
 		return fmt.Errorf("动作 %s 执行失败: retcode=%d, message=%s, wording=%s",
 			actionName, rsp.RetCode, rsp.Message, rsp.Wording)
 	}
-	logger.Info("群管理动作", append(baseFields,
+	l.Info("群管理动作", append(baseFields,
 		logger.S("api_action", actionName),
 		logger.I64("latency_ms", time.Since(start).Milliseconds()))...)
 	return nil

@@ -13,6 +13,8 @@ package event
 // 不另起语义重复的日志。
 
 import (
+	"context"
+
 	"go.uber.org/zap"
 
 	"plumebot/internal/domain/entity"
@@ -51,7 +53,10 @@ func isWarnOutcome(oc Outcome) bool {
 
 // logOutcome 统一打一条「消息结局」结局行（架构 §17.4）：message_id/group_id/user_id/outcome
 // 必带，extra 追加结局细节（命中词、错误对象、reason 等）。每条消息至多一个结局行。
-func logOutcome(msg entity.Message, oc Outcome, extra ...zap.Field) {
+// ctx 内注入的派生 logger 携带 trace_id（连接层按会话注入，见 onebot msgTraceID），
+// 使一条会话的全部动态可在日志浏览页按 trace_id 一键串联。
+func logOutcome(ctx context.Context, msg entity.Message, oc Outcome, extra ...zap.Field) {
+	l := logger.From(ctx)
 	fields := []zap.Field{
 		logger.S("message_id", msg.MessageID),
 		logger.S("group_id", msg.GroupID),
@@ -60,8 +65,8 @@ func logOutcome(msg entity.Message, oc Outcome, extra ...zap.Field) {
 	}
 	fields = append(fields, extra...)
 	if isWarnOutcome(oc) {
-		logger.Warn("消息结局", fields...)
+		l.Warn("消息结局", fields...)
 		return
 	}
-	logger.Info("消息结局", fields...)
+	l.Info("消息结局", fields...)
 }

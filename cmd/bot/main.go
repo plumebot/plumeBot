@@ -26,12 +26,14 @@ import (
 	"plumebot/internal/infra/ai"
 	"plumebot/internal/infra/ai/tools"
 	"plumebot/internal/infra/imagecache"
+	"plumebot/internal/infra/logfile"
 	"plumebot/internal/infra/onebot"
 	"plumebot/internal/infra/sqlite"
 	"plumebot/internal/service/admin"
 	"plumebot/internal/service/agent"
 	"plumebot/internal/service/control"
 	"plumebot/internal/service/event"
+	logsvc "plumebot/internal/service/log"
 	"plumebot/internal/service/memory"
 	"plumebot/internal/service/plugin"
 	"plumebot/pkg/config"
@@ -273,7 +275,8 @@ const (
 )
 
 // startAdminWeb 构建并启动管理后端 web 服务（P7-001）：
-// JWT secret 解析 → admin service → handler/web.NewRouter → 端口扫描监听。
+// JWT secret 解析 → admin service → 日志查询 service（infra/logfile 读 zap JSON 日志文件，
+// 架构 §17.6）→ handler/web.NewRouter → 端口扫描监听。
 // 返回的 *http.Server 供优雅关闭；全端口占用时返回 nil（打破 shutdown 判空）。
 func startAdminWeb(cfg config.Config, dataDir string, store domain.Storage, memSvc *memory.MemoryService) *http.Server {
 	secret, err := resolveAdminJWTSecret(dataDir, cfg.Admin.JWTSecret)
@@ -290,7 +293,11 @@ func startAdminWeb(cfg config.Config, dataDir string, store domain.Storage, memS
 	}
 	mgr := jwt.NewManager(secret, ttl)
 	adminSvc := admin.NewService(store, memSvc, mgr)
-	return newAdminWebServer(web.NewRouter(adminSvc, mgr), port)
+	// 日志浏览依赖：读取 pkg/logger 实际生效目录（~/.plumebot/logs）下的 JSON 日志文件。
+	logDir := logger.Dir()
+	logSvc := logsvc.New(logfile.New(logDir))
+	logger.Info("日志浏览已启用", logger.S("logs_dir", logDir))
+	return newAdminWebServer(web.NewRouter(adminSvc, logSvc, mgr), port)
 }
 
 // resolveAdminJWTSecret 解析管理后端 JWT 密钥：

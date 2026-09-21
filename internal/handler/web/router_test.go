@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,13 +16,19 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"plumebot/internal/handler/web/dto/response"
+	"plumebot/internal/infra/logfile"
 	"plumebot/internal/infra/sqlite"
 	"plumebot/internal/service/admin"
+	logsvc "plumebot/internal/service/log"
 	"plumebot/internal/service/memory"
 	"plumebot/pkg/jwt"
 )
 
-// newTestRouter 用真实 SQLite store 组装完整编（鉴权 + 注册/登录可用）。
+// testLogTS 是测试日志样本的时间戳（固定值，避免依赖真实时钟）。
+var testLogTS = float64(time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC).UnixNano()) / 1e9
+
+// newTestRouter 用真实 SQLite store 组装完整编（鉴权 + 注册/登录可用）；
+// 日志读取用真实 logfile.Reader（临时日志目录，预置 info/error 样本各一条，见 writeTestLogs）。
 func newTestRouter(t *testing.T) (*gin.Engine, *jwt.Manager) {
 	t.Helper()
 	store, err := sqlite.Open(t.TempDir())
@@ -32,7 +40,36 @@ func newTestRouter(t *testing.T) (*gin.Engine, *jwt.Manager) {
 	// 用真 MemoryService：群画像写/删后的缓存失效走真实链路（nil 会导致 nil 指针 panic）。
 	memSvc := memory.NewMemoryService(memory.NewWindow(), store, nil, memory.BuilderConfig{})
 	svc := admin.NewService(store, memSvc, mgr)
-	return NewRouter(svc, mgr), mgr
+
+	logDir := t.TempDir()
+	writeTestLogs(t, logDir)
+	return NewRouter(svc, logsvc.New(logfile.New(logDir)), mgr), mgr
+}
+
+// writeTestLogs 写入 zap 形状的 JSON 日志样本：按级别落各自文件
+//（info.log 两条含 trace_id、error.log 一条），与 pkg/logger 的实际产物一致。
+func writeTestLogs(t *testing.T, dir string) {
+	t.Helper()
+	lines := []map[string]any{
+		{"ts": testLogTS, "level": "info", "msg": "收到消息", "trace_id": "group:100", "message_id": "m1"},
+		{"ts": testLogTS + 1, "level": "info", "msg": "消息结局", "trace_id": "group:100", "outcome": "agent_replied"},
+		{"ts": testLogTS + 2, "level": "error", "msg": "启动失败", "error": "boom"},
+	}
+	for _, l := range lines {
+		b, err := json.Marshal(l)
+		if err != nil {
+			t.Fatalf("序列化样本失败: %v", err)
+		}
+		name, _ := l["level"].(string)
+		f, err := os.OpenFile(filepath.Join(dir, name+".log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatalf("打开样本日志失败: %v", err)
+		}
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			t.Fatalf("写入样本日志失败: %v", err)
+		}
+		f.Close()
+	}
 }
 
 // doJSON 发送 JSON 请求，返回 HTTP 状态码 + 解包后的响应包络。
@@ -427,6 +464,65 @@ func TestServeIndexPage(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "PlumeBot 管理") {
 		t.Fatalf("首页应 200 且包含标题, 实际 %d", w.Code)
+	}
+}
+
+// TestLogEndpoint 验证日志浏览接口（架构 §17.6）：鉴权、全量/按 level/trace_id 过滤、参数校验。
+func TestLogEndpoint(t *testing.T) {
+	r, _ := newTestRouter(t)
+	token := registerAndLogin(t, r)
+
+	// 无 token → 401（与其余管理接口一致）。
+	if status, _ := doJSON(t, r, http.MethodGet, "/api/v1/logs", "", nil); status != http.StatusUnauthorized {
+		t.Fatalf("无 token 应 401, 实际 %d", status)
+	}
+
+	// 全量：3 条样本，最新在前，字段齐全（ts/level/message/trace_id 可被前端直接消费）。
+	status, env := doJSON(t, r, http.MethodGet, "/api/v1/logs", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("查询日志应 200, 实际 %d %v", status, env)
+	}
+	data := env["data"].(map[string]any)
+	items := data["items"].([]any)
+	if len(items) != 3 || data["has_more"] != false {
+		t.Fatalf("应返回 3 条且 has_more=false, 实际 %v", data)
+	}
+	first := items[0].(map[string]any)
+	if first["message"] != "启动失败" || first["level"] != "error" {
+		t.Fatalf("最新一条应为 error「启动失败」, 实际 %v", first)
+	}
+
+	// 按 level 过滤（error 语义含 fatal，infra 侧映射）。
+	_, env = doJSON(t, r, http.MethodGet, "/api/v1/logs?levels=info", token, nil)
+	items = env["data"].(map[string]any)["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("levels=info 应 2 条, 实际 %d", len(items))
+	}
+
+	// 按 trace_id 过滤：命中同会话的两条（入口行 + 结局行）。
+	_, env = doJSON(t, r, http.MethodGet, "/api/v1/logs?trace_id=group:100", token, nil)
+	items = env["data"].(map[string]any)["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("trace_id=group:100 应 2 条, 实际 %d", len(items))
+	}
+
+	// 分页：limit=1 首页 has_more=true，offset=2 末页 has_more=false。
+	_, env = doJSON(t, r, http.MethodGet, "/api/v1/logs?limit=1", token, nil)
+	if d := env["data"].(map[string]any); len(d["items"].([]any)) != 1 || d["has_more"] != true {
+		t.Fatalf("limit=1 应 1 条且 has_more=true, 实际 %v", d)
+	}
+	_, env = doJSON(t, r, http.MethodGet, "/api/v1/logs?limit=1&offset=2", token, nil)
+	if d := env["data"].(map[string]any); d["has_more"] != false {
+		t.Fatalf("offset=2 应为末页, 实际 %v", d)
+	}
+
+	// 非法参数 → 400（不静默忽略，避免筛选未生效却看到全量）。
+	for _, q := range []string{"levels=fatal", "begin=2026-09-21", "limit=-1", "offset=abc",
+		"begin=2026-09-22T00:00:00Z&end=2026-09-21T00:00:00Z"} {
+		status, env := doJSON(t, r, http.MethodGet, "/api/v1/logs?"+q, token, nil)
+		if status != http.StatusBadRequest || env["code"] != float64(response.CodeBadRequest) {
+			t.Fatalf("非法参数 %q 应 400/4000, 实际 %d %v", q, status, env)
+		}
 	}
 }
 

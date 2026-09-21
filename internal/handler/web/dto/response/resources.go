@@ -52,3 +52,9 @@ type BotState struct {
 	GroupID string          `json:"group_id"`
 	State   json.RawMessage `json:"state"`
 }
+
+// LogPage 日志浏览响应（架构 §17.6）：items 最新在前，has_more 表示还有更早记录可翻。
+type LogPage struct {
+	Items   []entity.LogEntry `json:"items"`
+	HasMore bool              `json:"has_more"`
+}

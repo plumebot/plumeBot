@@ -27,7 +27,7 @@ func (s *Service) Register(ctx context.Context, username, password string) (*Aut
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		logger.Warn("admin 注册失败：密码散列错误", logger.S("username", username),
+		logger.From(ctx).Warn("admin 注册失败：密码散列错误", logger.S("username", username),
 			logger.S("ip", ClientIPFrom(ctx)), logger.Err(err))
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func (s *Service) Register(ctx context.Context, username, password string) (*Aut
 	}); err != nil {
 		return nil, err
 	}
-	logger.Info("admin 注册首个账号",
+	logger.From(ctx).Info("admin 注册首个账号",
 		logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)))
 	return s.issueToken(username)
 }
@@ -56,11 +56,11 @@ func (s *Service) Login(ctx context.Context, username, password string) (*AuthRe
 		return nil, err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
-		logger.Warn("admin 登录失败",
+		logger.From(ctx).Warn("admin 登录失败",
 			logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)))
 		return nil, ErrInvalidCredentials
 	}
-	logger.Info("admin 登录成功",
+	logger.From(ctx).Info("admin 登录成功",
 		logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)))
 	return s.issueToken(username)
 }
@@ -76,20 +76,20 @@ func (s *Service) ChangePassword(ctx context.Context, username, oldPwd, newPwd s
 	}
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(oldPwd)) != nil {
 		// 旧密码错误：Warn 带 IP（改密端点无每 IP 限流，猜旧密码需可发现，架构 §17.5）。
-		logger.Warn("admin 改密失败：旧密码错误",
+		logger.From(ctx).Warn("admin 改密失败：旧密码错误",
 			logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)))
 		return ErrWrongOldPassword
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPwd), bcrypt.DefaultCost)
 	if err != nil {
-		logger.Warn("admin 改密失败：密码散列错误",
+		logger.From(ctx).Warn("admin 改密失败：密码散列错误",
 			logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)), logger.Err(err))
 		return err
 	}
 	if err := s.store.UpdateAdminUserPassword(ctx, username, string(hash)); err != nil {
 		return err
 	}
-	logger.Info("admin 修改密码",
+	logger.From(ctx).Info("admin 修改密码",
 		logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)))
 	return nil
 }

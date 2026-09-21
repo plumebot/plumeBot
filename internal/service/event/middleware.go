@@ -26,10 +26,10 @@ func chain(mws []Middleware, final Handler) Handler {
 
 // logMiddleware 记录每条消息（含后续被限流丢弃的）——消息入口行（架构 §17.4 两条锚点之一）。
 // 消息日志统一由本中间件输出，连接层不再重复记录；每条消息的结局由各终局分叉
-// logOutcome 输出（恰好 1 入口 + 1 结局）。
+// logOutcome 输出（恰好 1 入口 + 1 结局）。经 logger.From(ctx) 输出，携带 ctx 内 trace_id。
 func logMiddleware(next Handler) Handler {
 	return func(ctx context.Context, msg entity.Message) error {
-		logger.Info("收到消息",
+		logger.From(ctx).Info("收到消息",
 			logger.S("message_id", msg.MessageID),
 			logger.S("group_id", msg.GroupID),
 			logger.S("user_id", msg.UserID),

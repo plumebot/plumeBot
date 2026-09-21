@@ -42,6 +42,7 @@ func NewSummarizer(ctx context.Context, cfg config.Config) (domain.Summarizer, e
 // Summarize 执行一次摘要推理：system 为摘要指令，user 为待压缩文本，返回模型输出文本。
 // 记模型调用度量（架构 §17.2 infra/ai）：model、latency_ms、prompt/completion tokens。
 func (s *EinoSummarizer) Summarize(ctx context.Context, system, user string) (string, error) {
+	l := logger.From(ctx) // 携带 trace_id（会话键）；未注入时回退全局
 	start := time.Now()
 	msg, err := s.cm.Generate(ctx, []*schema.Message{
 		schema.SystemMessage(system),
@@ -53,7 +54,7 @@ func (s *EinoSummarizer) Summarize(ctx context.Context, system, user string) (st
 	}
 	if err != nil {
 		fields = append(fields, logger.Err(err))
-		logger.Warn("模型调用失败", fields...)
+		l.Warn("模型调用失败", fields...)
 		return "", fmt.Errorf("摘要推理失败: %w", err)
 	}
 	if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
@@ -63,6 +64,6 @@ func (s *EinoSummarizer) Summarize(ctx context.Context, system, user string) (st
 			logger.I("completion_tokens", u.CompletionTokens),
 			logger.I("total_tokens", u.TotalTokens))
 	}
-	logger.Info("模型调用", fields...)
+	l.Info("模型调用", fields...)
 	return msg.Content, nil
 }
