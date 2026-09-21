@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"context"
+
 	"plumebot/internal/domain"
 	"plumebot/internal/service/memory"
 	"plumebot/pkg/jwt"
@@ -11,6 +13,21 @@ import (
 // *memory.MemoryService 实现了该接口；测试可注入假实现断言失效被触发。
 type groupProfileInvalidator interface {
 	InvalidateGroupProfile(groupID string)
+}
+
+// clientIPCtxKey 是来源 IP 在 context 中的键类型（私有，避免与其他包键冲突）。
+type clientIPCtxKey struct{}
+
+// WithClientIP 把来源 IP 注入 context（handler/web 中间件调用），
+// 供 service 层审计日志记录操作来源（架构 §17.5）。
+func WithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPCtxKey{}, ip)
+}
+
+// ClientIPFrom 从 context 取来源 IP；未注入返回空串（审计字段留空）。
+func ClientIPFrom(ctx context.Context) string {
+	ip, _ := ctx.Value(clientIPCtxKey{}).(string)
+	return ip
 }
 
 // Service 管理后端配置读写（P7-001，单 service 按配置域分组方法，见 docs/admin-web-api-plan.md §4.3）。
@@ -26,10 +43,13 @@ func NewService(store domain.Storage, mem *memory.MemoryService, mgr *jwt.Manage
 	return &Service{store: store, mem: mem, mgr: mgr}
 }
 
-// audit 记录管理面写操作（谁/何时/改了哪个配置目标，见计划书 §11 安全考虑 6）。
-func (s *Service) audit(by, resource, target string) {
+// audit 记录管理面写操作（谁/何时/改了哪个配置目标/来源 IP，见计划书 §11 安全考虑 6）。
+func (s *Service) audit(ctx context.Context, by, resource, target string) {
 	logger.Info("admin config changed",
-		logger.S("admin_identity", by), logger.S("resource", resource), logger.S("target", target))
+		logger.S("admin_identity", by),
+		logger.S("resource", resource),
+		logger.S("target", target),
+		logger.S("ip", ClientIPFrom(ctx)))
 }
 
 // AuthResult 注册/登录成功返回的认证结果（token 由 mgr 签发）。

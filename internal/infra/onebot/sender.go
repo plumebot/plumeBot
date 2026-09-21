@@ -11,6 +11,7 @@ import (
 
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
+	"plumebot/pkg/logger"
 )
 
 // botSender 是 domain.Sender 的 onebot 实现（B-003）：持有当前事件 *zero.Ctx，
@@ -26,11 +27,17 @@ func newSender(ctx *zero.Ctx) domain.Sender {
 }
 
 // Send 把回复载荷发送到当前事件来源。空 Segments 视为无效回复。
+// 发送成功记 Debug（架构 §17.2 防重复规则 4：成功只 Debug，Info 锚点归调用方的结局行/
+// 命令结局，避免同一事实两层各打一条）；失败原样上抛由调用方按结局处理。
 func (s *botSender) Send(_ context.Context, r entity.Reply) error {
 	if len(r.Segments) == 0 {
 		return errors.New("回复载荷缺少内容段（Segments 为空）")
 	}
 	s.ctx.SendChain(replyToChain(r, s.ctx.Event)...)
+	logger.Debug("回复已发送",
+		logger.S("group_id", strconv.FormatInt(s.ctx.Event.GroupID, 10)),
+		logger.S("user_id", strconv.FormatInt(s.ctx.Event.UserID, 10)),
+		logger.I("segments", len(r.Segments)))
 	return nil
 }
 

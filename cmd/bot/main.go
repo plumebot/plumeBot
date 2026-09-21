@@ -40,15 +40,17 @@ import (
 )
 
 func main() {
+	// 初始化日志（先以默认 info 级别）：使配置加载阶段（模板写入、env 覆盖）的日志可见，
+	// 且配置加载失败时 Fatal 能落盘/打终端。读到 log.level 后再经 SetLevel 应用（下方）。
+	logger.Init(logger.Config{})
+	defer logger.Sync()
+
 	// 1. 加载配置
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		logger.Fatal("加载配置失败", logger.Err(err))
 	}
-
-	// 初始化日志
-	logger.Init(logger.Config{Level: cfg.Log.Level})
-	defer logger.Sync()
+	logger.SetLevel(cfg.Log.Level)
 
 	// 2. 创建 infra 实现
 	ctx := context.Background()
@@ -98,6 +100,9 @@ func main() {
 	if err := toolsRegistry.Register("group_set_card", gmTools.GroupSetCard()); err != nil {
 		logger.Fatal("注册 group_set_card 失败", logger.Err(err))
 	}
+	logger.Info("工具注册完成",
+		logger.S("registered", strings.Join(toolsRegistry.Names(), ",")),
+		logger.I("enabled", len(cfg.Tools.Enabled)))
 
 	// P4-001 人格模板 + P6-001 运行时生效：
 	// persona 模板按 cfg.Agent.Name 由 service/memory BuildMessages 每次组装现查注入 system 消息
@@ -141,19 +146,23 @@ func main() {
 	if err != nil {
 		logger.Fatal("初始化 LLM Agent 失败", logger.Err(err))
 	}
+	chat, _ := cfg.LLM.ChatEntry() // 已由 NewAgent 校验过非空；兜底空条目避免日志 panic
+	logger.Info("对话 Agent 已构建", logger.S("agent", agentName), logger.S("model", chat.Model))
 	// 窗口压缩摘要器：与对话 Agent 分离（无人设、无工具，单次模型调用）。
 	summarizerInfra, err := ai.NewSummarizer(ctx, *cfg)
 	if err != nil {
 		logger.Fatal("初始化摘要器失败", logger.Err(err))
 	}
+	logger.Info("摘要器已构建", logger.S("model", chat.Model))
 	// 阶段2 图片描述器：vision_model 配置时启用，P6-001 组装经 BuildMessages 惰性调用；
 	// vision_model 为空 → 描述关闭（nil），图片只落 [图片] 占位。
 	var describerInfra domain.MediaDescriber
-	if _, ok := cfg.LLM.VisionEntry(); ok {
+	if vision, ok := cfg.LLM.VisionEntry(); ok {
 		describerInfra, err = ai.NewMediaDescriber(ctx, *cfg)
 		if err != nil {
 			logger.Fatal("初始化图片描述器失败", logger.Err(err))
 		}
+		logger.Info("图片描述器已构建", logger.S("model", vision.Model))
 	} else if cfg.LLM.VisionModel != "" {
 		// P6-001 审查 BUG-5：vision_model 填了但未命中 models 条目 → 描述静默关闭，显式告警。
 		logger.Warn("llm.vision_model 已配置但未指向任何 models 条目，图片描述关闭（检查 models 列表的 name）",
@@ -204,7 +213,6 @@ func main() {
 	if cfg.Onebot.WsURL == "" {
 		cfg.Onebot.WsURL = config.DefaultWsURL // 与 onebot.New 内部兜底保持一致，保证日志显示真实连接地址
 	}
-	chat, _ := cfg.LLM.ChatEntry() // 已由 NewAgent 校验过非空；兜底空条目避免日志 panic
 	logger.Info("PlumeBot 启动，正在连接 NapCat",
 		logger.S("name", cfg.Bot.Name),
 		logger.S("ws_url", cfg.Onebot.WsURL),
@@ -290,10 +298,12 @@ func startAdminWeb(cfg config.Config, dataDir string, store domain.Storage, memS
 // 不存在则生成 32 字节随机密钥写回（0600）。密钥绝不打印。
 func resolveAdminJWTSecret(dataDir, configured string) (string, error) {
 	if configured != "" {
+		logger.Info("admin JWT 密钥来自配置（jwt_secret）")
 		return configured, nil
 	}
 	path := filepath.Join(dataDir, "admin_jwt_secret")
 	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		logger.Info("admin JWT 密钥复用已持久化文件", logger.S("path", path))
 		return strings.TrimSpace(string(b)), nil
 	}
 	b := make([]byte, 32)
@@ -304,6 +314,8 @@ func resolveAdminJWTSecret(dataDir, configured string) (string, error) {
 	if err := os.WriteFile(path, []byte(secret), 0o600); err != nil {
 		return "", err
 	}
+	// 只记生命周期与路径，密钥本身绝不入日志（架构 §17.5）。
+	logger.Info("admin JWT 密钥已生成并持久化（0600）", logger.S("path", path))
 	return secret, nil
 }
 
@@ -332,12 +344,14 @@ func newAdminWebServer(handler http.Handler, startPort int) *http.Server {
 }
 
 // newWebServer 构建仅含健康检查 /ping 的 gin web 服务。
-// gin.New + Recovery（而非 Default）：避免健康轮询的每次请求日志刷屏。
+// gin.New + 自定义中间件（web 包提供）：访问日志经 logger.GinAccessWriter 落 logs/gin.log、
+// panic 经 zap 记 error.log——**不写 stdout/stderr**，健康轮询不再刷终端（架构 §17.1，
+// 修正此前「注释称避免刷屏却仍 gin.Logger 打 stdout」的矛盾）。
 // 仅作进程存活探针，不暴露任何管理/业务端点。
 func newWebServer(addr string) *http.Server {
 	r := gin.New()
-	r.Use(gin.Recovery())
-	r.Use(gin.Logger())
+	r.Use(web.Recovery())
+	r.Use(web.AccessLogger())
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})
 	})

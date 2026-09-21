@@ -26,6 +26,6 @@ func (s *Service) UpsertPersona(ctx context.Context, by string, p entity.Persona
 	if err := s.store.UpsertPersona(ctx, p); err != nil {
 		return nil, err
 	}
-	s.audit(by, "persona", p.Agent)
+	s.audit(ctx, by, "persona", p.Agent)
 	return &p, nil
 }

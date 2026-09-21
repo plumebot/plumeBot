@@ -80,8 +80,14 @@ func (c *Client) registerMatchers() {
 		sendCtx = domain.WithGroupManager(sendCtx, newGroupManager(ctx, c.store, c.botID))
 		if err := c.msg.Handle(sendCtx, msg); err != nil {
 			if reply := decideReply(err); reply != "" {
-				// ctx.Send 自动回事件来源（群回群、私聊回私聊），发送失败由 ZeroBot 内部记录。
+				// ctx.Send 自动回事件来源（群回群、私聊回私聊）。发送成功只 Debug
+				//（结局已由 service/event 的 rate_limited/sensitive 记 Warn，不重复）；
+				// 失败告警（原「由 ZeroBot 内部记录」兜底保留，但显式记录便于恢复固定文案链路）。
 				ctx.Send(reply)
+				logger.Debug("固定文案已发送（限流/敏感词）",
+					logger.S("message_id", msg.MessageID),
+					logger.S("group_id", msg.GroupID),
+					logger.S("user_id", msg.UserID))
 				return
 			}
 			logger.Warn("消息处理失败", logger.Err(err))

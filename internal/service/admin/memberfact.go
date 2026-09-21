@@ -24,7 +24,7 @@ func (s *Service) AddMemberFact(ctx context.Context, by, groupID, userID, fact s
 	if err := s.store.AddMemberFact(ctx, groupID, userID, fact); err != nil {
 		return err
 	}
-	s.audit(by, "member_facts", groupID+"/"+userID+"/"+fact)
+	s.audit(ctx, by, "member_facts", groupID+"/"+userID+"/"+fact)
 	return nil
 }
 
@@ -40,6 +40,6 @@ func (s *Service) DeleteMemberFact(ctx context.Context, by, groupID, userID, fac
 	if err := s.store.DeleteMemberFact(ctx, groupID, userID, fact); err != nil {
 		return err
 	}
-	s.audit(by, "member_facts", groupID+"/"+userID+"/"+fact)
+	s.audit(ctx, by, "member_facts", groupID+"/"+userID+"/"+fact)
 	return nil
 }

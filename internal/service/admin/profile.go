@@ -23,7 +23,7 @@ func (s *Service) UpsertGroupProfile(ctx context.Context, by string, p entity.Gr
 		return nil, err
 	}
 	s.mem.InvalidateGroupProfile(p.GroupID) // 决策 D9：写库成功才失效
-	s.audit(by, "group_profile", p.GroupID)
+	s.audit(ctx, by, "group_profile", p.GroupID)
 	return &p, nil
 }
 
@@ -33,6 +33,6 @@ func (s *Service) DeleteGroupProfile(ctx context.Context, by, groupID string) er
 		return err
 	}
 	s.mem.InvalidateGroupProfile(groupID)
-	s.audit(by, "group_profile", groupID)
+	s.audit(ctx, by, "group_profile", groupID)
 	return nil
 }

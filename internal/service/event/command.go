@@ -52,13 +52,9 @@ func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) 
 	})
 	switch {
 	case err == nil:
-		logger.Info("插件命令执行成功",
-			logger.S("command", cmd),
-			logger.S("group_id", msg.GroupID),
-			logger.S("user_id", msg.UserID),
+		logOutcome(msg, OutcomeCommand, logger.S("command", cmd),
 			logger.S("reply_segments", replySegmentSummary(res.Reply)),
-			logger.S("actions", groupActionSummary(res.Actions)),
-		)
+			logger.S("actions", groupActionSummary(res.Actions)))
 		// B-017：校验通过后执行回复发送（失败仅告警，命令分支吞错误语义维持现状）。
 		if res.Reply != nil {
 			if err := s.sendReply(ctx, *res.Reply); err != nil {
@@ -75,9 +71,10 @@ func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) 
 			}
 		}
 	case errors.Is(err, domain.ErrNotFound):
-		logger.Debug("未找到插件命令", logger.S("command", cmd), logger.S("group_id", msg.GroupID))
+		// 未找到插件命令：命令消息已消费（防 confess 提示），记 Info 结局（架构 §17.4）。
+		logOutcome(msg, OutcomeCommandNotFound, logger.S("command", cmd))
 	default:
-		logger.Warn("插件命令执行失败", logger.S("command", cmd), logger.Err(err))
+		logOutcome(msg, OutcomeCommandError, logger.S("command", cmd), logger.Err(err))
 	}
 	return true, nil // 命令分支吞错误只记日志（维持现状），始终 handled
 }
@@ -98,6 +95,7 @@ func (s *EventService) handleHelpCommand(ctx context.Context, msg entity.Message
 	}); err != nil {
 		logger.Warn("help 回复发送失败", logger.Err(err))
 	}
+	logOutcome(msg, OutcomeCommand, logger.S("command", "help"))
 	return true
 }
 

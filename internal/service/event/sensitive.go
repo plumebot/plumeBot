@@ -20,7 +20,7 @@ func newSensitiveWordFilter(words []string) *sensitiveWordFilter {
 }
 
 // sensitiveWordMiddleware 是敏感词过滤中间件：
-// 命中 → warn 日志（含命中词、群、用户）→ 返回 *domain.SensitiveWordError，
+// 命中 → 结局行 sensitive（含命中词）→ 返回 *domain.SensitiveWordError，
 // 由连接层识别后回复固定文案；未命中 → 放行给 next。
 func sensitiveWordMiddleware(filter *sensitiveWordFilter) Middleware {
 	return func(next Handler) Handler {
@@ -29,12 +29,7 @@ func sensitiveWordMiddleware(filter *sensitiveWordFilter) Middleware {
 			if !ok {
 				return next(ctx, msg)
 			}
-			logger.Warn("消息命中敏感词，已拦截",
-				logger.S("message_id", msg.MessageID),
-				logger.S("group_id", msg.GroupID),
-				logger.S("user_id", msg.UserID),
-				logger.S("word", word),
-			)
+			logOutcome(msg, OutcomeSensitive, logger.S("word", word))
 			return &domain.SensitiveWordError{Word: word}
 		}
 	}

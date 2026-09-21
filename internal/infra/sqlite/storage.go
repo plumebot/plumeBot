@@ -16,6 +16,7 @@ import (
 
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
+	"plumebot/pkg/logger"
 )
 
 // schemaFS 内嵌 migrations/ 目录下的全部 DDL 迁移文件（文件名序执行）。
@@ -59,6 +60,7 @@ func Open(dataDir string) (*Storage, error) {
 		return nil, fmt.Errorf("sqlite: 建表失败: %w", err)
 	}
 
+	logger.Info("SQLite 已打开", logger.S("path", dbPath), logger.S("journal_mode", "WAL"))
 	return s, nil
 }
 
@@ -88,10 +90,12 @@ func (s *Storage) migrate(ctx context.Context) error {
 	sort.Strings(names)
 
 	if _, err := s.db.ExecContext(ctx, sqlCreateSchemaMigrations); err != nil {
+		logger.Error("创建 schema_migrations 失败", logger.Err(err))
 		return fmt.Errorf("创建 schema_migrations 失败: %w", err)
 	}
 	applied, err := s.appliedMigrations(ctx)
 	if err != nil {
+		logger.Warn("读取已执行迁移失败", logger.Err(err))
 		return err
 	}
 
@@ -102,6 +106,7 @@ func (s *Storage) migrate(ctx context.Context) error {
 		}
 		b, err := schemaFS.ReadFile(name)
 		if err != nil {
+			logger.Error("读取迁移文件失败", logger.S("version", version), logger.Err(err))
 			return fmt.Errorf("读取迁移文件 %s 失败: %w", name, err)
 		}
 		var sb strings.Builder
@@ -109,6 +114,7 @@ func (s *Storage) migrate(ctx context.Context) error {
 		sb.WriteString(";")
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
+			logger.Error("开启迁移事务失败", logger.S("version", version), logger.Err(err))
 			return fmt.Errorf("开启迁移事务 %s 失败: %w", version, err)
 		}
 		for _, stmt := range strings.Split(sb.String(), ";") {
@@ -118,16 +124,20 @@ func (s *Storage) migrate(ctx context.Context) error {
 			}
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
 				tx.Rollback()
+				logger.Error("执行迁移失败", logger.S("version", version), logger.Err(err))
 				return fmt.Errorf("执行迁移 %s 失败: %w\n%s", version, err, stmt)
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES (?)`, version); err != nil {
 			tx.Rollback()
+			logger.Error("记录迁移版本失败", logger.S("version", version), logger.Err(err))
 			return fmt.Errorf("记录迁移 %s 失败: %w", version, err)
 		}
 		if err := tx.Commit(); err != nil {
+			logger.Error("提交迁移失败", logger.S("version", version), logger.Err(err))
 			return fmt.Errorf("提交迁移 %s 失败: %w", version, err)
 		}
+		logger.Info("迁移已应用", logger.S("version", version))
 	}
 	return nil
 }
@@ -452,7 +462,7 @@ func (s *Storage) UpsertGroupConfig(ctx context.Context, cfg entity.GroupConfig)
 }
 
 // GetGroupConfig 按群 ID 查询静态配置。不存在时返回 domain.ErrNotFound
-//（群管理开关语义：无配置行 = 默认关，见 entity.GroupConfig.GroupMgmtEnabled 注释）。
+// （群管理开关语义：无配置行 = 默认关，见 entity.GroupConfig.GroupMgmtEnabled 注释）。
 func (s *Storage) GetGroupConfig(ctx context.Context, groupID string) (*entity.GroupConfig, error) {
 	row := s.db.QueryRowContext(ctx, sqlGetGroupConfig, groupID)
 

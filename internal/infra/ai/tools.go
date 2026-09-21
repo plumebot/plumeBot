@@ -52,6 +52,16 @@ func (r *ToolsRegistry) EnabledTools(enabled []string) ([]tool.BaseTool, error) 
 	return out, nil
 }
 
+// Names 返回已注册工具名的排序列表（启动日志用，架构 §17.2 cmd/bot main）。
+func (r *ToolsRegistry) Names() []string {
+	names := make([]string, 0, len(r.tools))
+	for n := range r.tools {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // registeredToolNames 返回已注册工具名的排序、逗号分隔列表（用于错误提示）。
 func registeredToolNames(m map[string]tool.BaseTool) string {
 	names := make([]string, 0, len(m))

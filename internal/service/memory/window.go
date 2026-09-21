@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"plumebot/internal/domain/entity"
+	"plumebot/pkg/logger"
 )
 
 // 上下文窗口容量常量（轮 = 1 条消息）。
@@ -63,6 +64,10 @@ func (w *Window) AppendToSession(_ context.Context, sessionID string, msg entity
 		}
 	}
 	sw.data = buf
+	logger.Debug("窗口写入",
+		logger.S("session", sessionID),
+		logger.S("message_id", msg.MessageID),
+		logger.I("size", len(buf)), logger.B("full", full))
 	return full, nil
 }
 
@@ -72,6 +77,7 @@ func (w *Window) AppendToSession(_ context.Context, sessionID string, msg entity
 func (w *Window) GetWindow(_ context.Context, sessionID string) ([]entity.Message, error) {
 	v, ok := w.sessions.Load(sessionID)
 	if !ok {
+		logger.Debug("窗口读取（空会话）", logger.S("session", sessionID))
 		return []entity.Message{}, nil
 	}
 	sw := v.(*sessionWindow)
@@ -88,6 +94,7 @@ func (w *Window) GetWindow(_ context.Context, sessionID string) ([]entity.Messag
 		copy(parts, buf[i].Parts)
 		out[i].Parts = parts
 	}
+	logger.Debug("窗口读取", logger.S("session", sessionID), logger.I("size", len(out)))
 	return out, nil
 }
 
@@ -110,9 +117,11 @@ func (w *Window) BackfillParts(_ context.Context, sessionID, messageID string, p
 	for i := range sw.data {
 		if sw.data[i].MessageID == messageID {
 			sw.data[i].Parts = append([]entity.ContentPart(nil), parts...)
+			logger.Debug("窗口回填图片描述", logger.S("session", sessionID), logger.S("message_id", messageID))
 			return
 		}
 	}
+	logger.Debug("窗口回填未命中（消息已裁/淘汰）", logger.S("session", sessionID), logger.S("message_id", messageID))
 }
 
 // RemoveByIDs 从会话窗口精确移除指定 MessageID 的消息（P3-003 压缩批次归档后调用），
@@ -145,5 +154,7 @@ func (w *Window) RemoveByIDs(_ context.Context, sessionID string, ids []string) 
 		kept = append(kept, m)
 	}
 	sw.data = kept
+	logger.Debug("窗口移除（压缩批次）",
+		logger.S("session", sessionID), logger.I("removed", removed))
 	return removed, nil
 }

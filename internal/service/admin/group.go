@@ -26,7 +26,7 @@ func (s *Service) UpsertGroupConfig(ctx context.Context, by string, cfg entity.G
 	if err := s.store.UpsertGroupConfig(ctx, cfg); err != nil {
 		return nil, err
 	}
-	s.audit(by, "group_config", cfg.GroupID)
+	s.audit(ctx, by, "group_config", cfg.GroupID)
 	return &cfg, nil
 }
 
@@ -35,6 +35,6 @@ func (s *Service) DeleteGroupConfig(ctx context.Context, by, groupID string) err
 	if err := s.store.DeleteGroupConfig(ctx, groupID); err != nil {
 		return err
 	}
-	s.audit(by, "group_config", groupID)
+	s.audit(ctx, by, "group_config", groupID)
 	return nil
 }

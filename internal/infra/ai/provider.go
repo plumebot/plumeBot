@@ -99,7 +99,12 @@ func NewOpenAIFactory(tr *ToolsRegistry) Factory {
 		if acfg.Description == "" {
 			acfg.Description = config.DefaultAgentDescription
 		}
-		return NewEinoAgent(ctx, cm, tools, acfg)
+		agt, err := NewEinoAgent(ctx, cm, tools, acfg)
+		if err != nil {
+			return nil, err
+		}
+		agt.model = entry.Model // 调用度量日志用（架构 §17.2 infra/ai）
+		return agt, nil
 	}
 }
 

@@ -16,11 +16,13 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"go.uber.org/zap"
 
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/base64util"
 	"plumebot/pkg/config"
+	"plumebot/pkg/logger"
 )
 
 // 编译期校验：EinoMediaDescriber 实现 domain.MediaDescriber。
@@ -53,8 +55,10 @@ const (
 // 其余（本地路径，base64 入链闭合产物）→ os.ReadFile。
 // P6-001 B-027：按内容哈希缓存成功描述（contentHash→desc，并发安全），重复图片不再调用模型；
 // 失败按 contentHash 记冷却（BUG-3），冷却期内直接失败，防重试风暴。
+// model 为视觉模型名（调用度量日志用，NewMediaDescriber 从 vision_entry 取）。
 type EinoMediaDescriber struct {
 	cm    model.BaseChatModel
+	model string
 	http  *http.Client
 	mu    sync.Mutex
 	cache map[string]string    // contentHash → desc；仅缓存成功结果（B-027）
@@ -74,6 +78,7 @@ func NewMediaDescriber(ctx context.Context, cfg config.Config) (domain.MediaDesc
 	}
 	return &EinoMediaDescriber{
 		cm:    cm,
+		model: entry.Model,
 		http:  &http.Client{Timeout: fetchTimeout},
 		cache: make(map[string]string),
 		fails: make(map[string]time.Time),
@@ -83,24 +88,32 @@ func NewMediaDescriber(ctx context.Context, cfg config.Config) (domain.MediaDesc
 // Describe 生成图片的文本描述：加载图片字节 → base64 → 复用 ToSchema 构造
 // user 多模态消息（text + image，与 spike 冒烟同形状）→ 前置 system → 视觉模型单次调用。
 // 命中成功缓存（B-027）直接返回；命中失败冷却（BUG-3）直接返回失败，均不触达模型。
+// 日志：缓存命中/冷却命中 Debug、视觉调用记模型调用度量 Info（架构 §17.2 infra/ai）—
+// 排障「图片一直是 [图片]」有依据（缓存失效、合并接口不可达、视觉调用失败一目了然）。
 func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPart) (string, error) {
 	key := imageContentKey(part)
 	if key != "" {
 		d.mu.Lock()
 		if desc, ok := d.cache[key]; ok {
 			d.mu.Unlock()
+			logger.Debug("图片描述缓存命中", logger.S("key", key))
 			return desc, nil
 		}
 		if retryAt, ok := d.fails[key]; ok && time.Now().Before(retryAt) {
 			d.mu.Unlock()
+			logger.Debug("图片描述失败冷却命中（BUG-3）",
+				logger.S("key", key), logger.S("retry_after", descRetryAfter.String()))
 			return "", fmt.Errorf("图片描述在失败冷却中（BUG-3，%s 内重试）: %s", descRetryAfter, key)
 		}
 		d.mu.Unlock()
 	}
 
+	start := time.Now()
 	data, mime, err := loadImageBytes(ctx, d.http, part)
 	if err != nil {
 		d.markFail(key)
+		logger.Warn("图片描述拉取失败",
+			logger.S("key", key), logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(err))
 		return "", fmt.Errorf("加载图片失败: %w", err)
 	}
 
@@ -118,10 +131,24 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 	input := append([]*schema.Message{schema.SystemMessage(systemDescribePrompt)}, msgs...)
 
 	out, err := d.cm.Generate(ctx, input)
+	fields := []zap.Field{
+		logger.S("model", d.model),
+		logger.I64("latency_ms", time.Since(start).Milliseconds()),
+	}
 	if err != nil {
 		d.markFail(key)
+		fields = append(fields, logger.Err(err))
+		logger.Warn("图片描述模型调用失败", fields...)
 		return "", fmt.Errorf("视觉推理失败: %w", err)
 	}
+	if out.ResponseMeta != nil && out.ResponseMeta.Usage != nil {
+		u := out.ResponseMeta.Usage
+		fields = append(fields,
+			logger.I("prompt_tokens", u.PromptTokens),
+			logger.I("completion_tokens", u.CompletionTokens),
+			logger.I("total_tokens", u.TotalTokens))
+	}
+	logger.Info("模型调用", fields...)
 
 	// 只缓存成功结果（失败走 markFail 冷却）。
 	if key != "" && out.Content != "" {

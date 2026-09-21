@@ -4,16 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"go.uber.org/zap"
 
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/config"
+	"plumebot/pkg/logger"
 )
 
 // defaultMaxIterations 是 tool 自动循环上限（adk 默认同为 20，显式设置防止未来默认值变化）。
@@ -28,8 +31,10 @@ var _ domain.Agent = (*EinoAgent)(nil)
 // EinoAgent 是基于 eino ChatModelAgent 的 domain.Agent 实现。
 // P6-001 起人格不再经 Instruction 注入（通常为空）：①系统人格由 service/memory BuildMessages
 // 组装注入首条 system 消息（改 persona 表即时生效），本层只执行推理；工具按需注入。
+// model 为对话模型名（调用度量日志用，架构 §17.2 infra/ai），由 provider 工厂注入。
 type EinoAgent struct {
 	agent *adk.ChatModelAgent
+	model string
 }
 
 // NewEinoAgent 组装 eino ChatModelAgent。
@@ -64,9 +69,16 @@ func NewEinoAgent(ctx context.Context, cm model.BaseChatModel, tools []tool.Base
 // Generate 将业务消息转换为 eino 消息并执行推理，返回最终文本回复。
 // 事件迭代中第一个错误（含超时、tool 循环超限、工具执行失败）直接透传；
 // 无任何模型输出消息时报错；有输出但 Content 为空 → 返回空串（P6 再议）。
+// 每次调用记模型调用度量（架构 §17.2）：model、latency_ms、prompt/completion tokens
+//（eino ResponseMeta.Usage，模型实现未返回时缺省）；失败也记 Warn（排障 AI 回复有依据）。
 func (e *EinoAgent) Generate(ctx context.Context, msgs []entity.ChatMessage) (string, error) {
+	start := time.Now()
+
 	schemaMsgs, err := ToSchema(msgs)
 	if err != nil {
+		logger.Warn("模型调用失败",
+			logger.S("model", e.model),
+			logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(err))
 		return "", err
 	}
 
@@ -79,6 +91,9 @@ func (e *EinoAgent) Generate(ctx context.Context, msgs []entity.ChatMessage) (st
 			break
 		}
 		if ev.Err != nil {
+			logger.Warn("模型调用失败",
+				logger.S("model", e.model),
+				logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(ev.Err))
 			return "", ev.Err
 		}
 		if ev.Output != nil && ev.Output.MessageOutput != nil && !ev.Output.MessageOutput.IsStreaming {
@@ -86,7 +101,22 @@ func (e *EinoAgent) Generate(ctx context.Context, msgs []entity.ChatMessage) (st
 		}
 	}
 	if last == nil {
+		logger.Warn("模型调用失败",
+			logger.S("model", e.model),
+			logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(errNoModelOutput))
 		return "", errNoModelOutput
 	}
+	fields := []zap.Field{
+		logger.S("model", e.model),
+		logger.I64("latency_ms", time.Since(start).Milliseconds()),
+	}
+	if last.ResponseMeta != nil && last.ResponseMeta.Usage != nil {
+		u := last.ResponseMeta.Usage
+		fields = append(fields,
+			logger.I("prompt_tokens", u.PromptTokens),
+			logger.I("completion_tokens", u.CompletionTokens),
+			logger.I("total_tokens", u.TotalTokens))
+	}
+	logger.Info("模型调用", fields...)
 	return FromSchema(last), nil
 }

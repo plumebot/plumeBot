@@ -626,3 +626,100 @@ NapCat → OneBot WS → ZeroBot
 循环，WSClient 无 Close），故 OneBot 连接自身不排空——进程退出即终止其内部 goroutine，
 QQ 在途事件不做等待。二次信号安全网：`signal.Stop` 恢复默认信号处理，关闭过程中再次
 Ctrl+C 直接终止进程（防卡死）。
+
+---
+
+## 17. 日志规范
+
+日志的目标：**任何一条消息 / 一次操作都能从日志还原真相**（是否被消费、结局如何、谁干了什么、
+花了多少成本），同时**同一事实只记一次**，避免层层重复刷屏。
+
+> 落地状态：本规范**已落地**（roadmap B-046 已完成），代码以本规范为唯一准绳；
+> 日志去向矩阵同步在 README「工程质量」段。
+
+### 17.1 输出形态与文件布局
+
+- 技术栈：`pkg/logger`（uber/zap 结构化 JSON + lumberjack 按**大小**滚动）。全局单例，**只写文件，不写终端**。
+- 目录：`~/.plumebot/logs/`（`os.UserHomeDir()/.plumebot/logs`，可由 `logger.Config.Dir` 覆盖）。
+- 滚动策略统一：单文件 10MB 切分 / 保留 5 备份 / 30 天（lumberjack `MaxSize/MaxBackups/MaxAge`）。
+- 按**精确级别分文件**（`levelGate` 只收该精确级别，不是 ≥ 聚合）：
+
+| 文件 | 记录 | 备注 |
+|---|---|---|
+| `debug.log` | 仅 Debug | 高频细节（窗口/画像/压缩跳过/发送成功/元事件） |
+| `info.log` | 仅 Info | 消息入口 + 结局账本 + 模型调用 + 写操作审计 + 启动里程碑 |
+| `warn.log` | 仅 Warn | 被拦截 / 各环节失败 / 护栏拒绝 / 429 / 401 |
+| `error.log` | 仅 Error | 服务级故障（自动带 stacktrace） |
+| `fatal.log` | 仅 Fatal | 启动致命错误（记账后 `os.Exit(1)`）；**Init 前**（`zl==nil`）改打 stderr 保证可见 |
+| `gin.log` | gin 每请求访问 | 经 `pkg/logger.GinAccessWriter()`（同滚动策略）；`/ping` 健康轮询也在其中，不再刷 stdout |
+
+- 全局门控 `log.level`（`config.yaml`，`debug|info|warn|error`）决定各级别是否输出；`fatal.log` 恒开。
+- ZeroBot/logrus 内部日志**保持 stderr**（不并入 zap 文件体系）；ZeroBot 侧细节（在线/重连）看终端或重定向。
+
+### 17.2 分层记录与防重复
+
+| 层 | 记录什么 | 不记录什么 |
+|---|---|---|
+| pkg/logger | 唯一输出形态 + gin.log / fatal.log 写入器 | 业务细节 |
+| infra/onebot | 事件转换失败、通知事件、连接状态、消息处理异常、固定文案发送结果 | 消息 Info（由 service/event 统一，连接层不重复） |
+| handler | 空（纯胶水透传） | 一切 |
+| service/event | 消息入口 + 结局账本 + 中间件拦截 | 结局细节不另打语义重复行 |
+| service/memory·control·agent | 内部细节 Debug、关键成功 Info、失败 Warn | — |
+| service/admin + handler/web | 管理审计 + 429/401 | 密钥/token/密码明文 |
+| infra/ai | 模型调用度量 + 记忆工具写库审计 | 群管理动作审计（收敛到执行器，见下） |
+| infra/sqlite | Open/迁移成功、迁移失败 Error | SQL 级慢查询（本期不做） |
+| pkg/config | 模板写入、env 覆盖变量名、加载成功 | env 值/密钥 |
+| cmd/bot main | 启动各步成功/失败、jwt secret 生命周期 | 密钥本身 |
+
+防重复五条：
+
+1. 一条入站消息恰好 **1 条入口行 + 1 条结局行**（见 §17.4）。
+2. 连接层（onebot）不重打消息 Info（现状约定保留）。
+3. 群管理动作审计**只**落在 `GroupManager.Execute`，工具层（`group_tools.go`）与插件执行层（`command.go executeActions`）不重复。
+4. 发送成功防重复：`sender.Send` 成功只打 Debug，结局行（`agent_replied`）才是 Info 锚点。
+5. 拦截/失败详情（命中词、错误对象）作为结局行自带字段，不另起语义相同的日志。
+
+### 17.3 等级语义
+
+| 级别 | 语义 | 典型位置 |
+|---|---|---|
+| Debug | 高频细节 | 窗口操作、画像缓存命中/失效、压缩跳过/冷却、发送成功、元事件 |
+| Info | 正常业务里程碑 | 消息入口、结局（正常）、命令成功、模型调用、压缩成功、sqlite 打开/迁移、config 模板写入/env 覆盖、jwt 生成、写操作审计 |
+| Warn | 可恢复问题 / 被拦截 | 限流丢弃、敏感词拦截、各环节失败、群管理护栏拒绝/API 失败、429/401、改密失败 |
+| Error | 服务级故障 | web 异常退出、admin API 内部错误、迁移失败 |
+| Fatal | 启动致命错误 | 初始化失败（落 fatal.log） |
+
+### 17.4 消息结局账本（核心）
+
+**需求**：默认 `log.level=info` 下，任何消息在「收到消息」之后必须还能对账到最终结局，
+即「这条消息最终被回复了 / 被拦截了 / 被忽略了」。
+
+- `service/event` 日志中间件（`logMiddleware`）打**入口行**：
+  `Info("收到消息", message_id, group_id, user_id, message_type, content, mentioned)`。
+- 管线的**每个终局分叉**打一条**结局行**，统一签名 `logOutcome(msg, outcome, …)`：
+  `Info|Warn("消息结局", message_id, group_id, user_id, outcome, …)`——正常结局 Info、异常结局 Warn。
+- 结局 `outcome` 枚举：
+
+| outcome | 级别 | 说明 |
+|---|---|---|
+| `agent_replied` | Info | 触发并发送成功（带 reason：auto / mention_forced） |
+| `command` / `command_not_found` | Info | 插件命令分支（含 /help）；未找到也算已消费 |
+| `not_triggered` | Info | 触发判断不回复（带 reason） |
+| `empty_reply` | Info | Agent 返回空回复过滤 |
+| `rate_limited` / `sensitive` | Warn | 中间件拦截丢弃（带 word / max_wait） |
+| `control_error` / `prompt_fail` / `agent_fail` / `send_fail` / `no_sender` / `command_error` | Warn | 各环节失败（带 err） |
+
+- **每条消息恰好一个结局行**：限流/敏感词在中间件拦截（不进入 respond）；命令分支 handled 短路
+  （不透传 respond）；普通消息唯一走 respond。发送**成功之后**的持久化/记账失败仍单独 Warn
+  （主结局 `agent_replied` 保留一行 Info）。
+- 连接层对 `Handle` 返回的非拦截错误打 `Warn("消息处理失败")`，不补结局行。
+
+### 17.5 审计与敏感信息
+
+- **管理后端**（service/admin + handler/web）：注册/登录/改密记录带来源 IP；写操作统一
+  「admin config changed」审计（identity/resource/target/IP）；429（每 IP 限流命中）与
+  401（JWT 验签失败）打 Warn 带 IP。
+- **群管理动作**：`GroupManager.Execute` 统一审计（group_id、actor、op、target、结果）；护栏拒绝
+  （开关关 / 非管理员 / 时长钳制）Warn。
+- **记忆工具写库**（store_fact / learn_jargon / forget_fact）：成功 Info / 失败 Warn，带会话归属。
+- **绝不入日志**：API key、JWT 密钥、密码、token——只标 `api_key_set: true/false`，只记录环境变量**名**不记录值。

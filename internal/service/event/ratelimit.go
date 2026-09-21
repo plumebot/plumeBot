@@ -41,9 +41,13 @@ func newRateLimiter(cfg config.RateLimitConfig) *rateLimiter {
 	}
 }
 
-// wait 为 msg 排队等待令牌。超时返回 domain.ErrRateLimited（已记录日志）。
+// wait 为 msg 排队等待令牌。超时返回 domain.ErrRateLimited（已记结局行 rate_limited）。
 func (r *rateLimiter) wait(ctx context.Context, msg entity.Message) error {
 	key := msg.SessionKey()
+	scope := "group"
+	if msg.MessageType != "group" {
+		scope = "user" // 私聊按用户分桶（SessionKey() = "private:"+UserID，群聊 = GroupID）
+	}
 
 	r.mu.Lock()
 	lim, ok := r.limit[key]
@@ -63,12 +67,8 @@ func (r *rateLimiter) wait(ctx context.Context, msg entity.Message) error {
 		if ctx.Err() != nil {
 			return err
 		}
-		logger.Warn("限流等待超时，消息丢弃",
-			logger.S("group_id", msg.GroupID),
-			logger.S("user_id", msg.UserID),
-			logger.S("message_id", msg.MessageID),
-			logger.S("max_wait", fmt.Sprintf("%ds", r.cfg.MaxWaitSeconds)),
-		)
+		logOutcome(msg, OutcomeRateLimited,
+			logger.S("scope", scope), logger.S("max_wait", fmt.Sprintf("%ds", r.cfg.MaxWaitSeconds)))
 		return domain.ErrRateLimited
 	}
 	return nil

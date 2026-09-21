@@ -34,8 +34,9 @@ var staticFS embed.FS
 // admin.enabled=false 时 main 侧不调用本函数（回退仅 /ping 的 newWebServer）。
 func NewRouter(svc *admin.Service, mgr *jwt.Manager) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery())
-	r.Use(gin.Logger())
+	r.Use(Recovery())
+	r.Use(AccessLogger())
+	r.Use(withClientIP())
 
 	// 存活探针 + 前端页。
 	r.GET("/ping", func(c *gin.Context) {

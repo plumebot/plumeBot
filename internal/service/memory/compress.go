@@ -48,10 +48,12 @@ func (c *Compressor) Trigger(ctx context.Context, chatID string) {
 	c.mu.Lock()
 	if c.inflight[chatID] {
 		c.mu.Unlock()
+		logger.Debug("跳过压缩：会话压缩中", logger.S("chat_id", chatID))
 		return
 	}
 	if t, ok := c.lastAttempt[chatID]; ok && time.Since(t) < CompressCooldown {
 		c.mu.Unlock()
+		logger.Debug("跳过压缩：失败冷却期", logger.S("chat_id", chatID))
 		return
 	}
 	c.inflight[chatID] = true
@@ -90,6 +92,7 @@ func (c *Compressor) compress(ctx context.Context, chatID string) error {
 		batchEnd = CompressBatch
 	}
 	if batchEnd <= 0 {
+		logger.Debug("窗口不足一个压缩批次，跳过", logger.S("chat_id", chatID))
 		return nil // 窗口不足一个压缩批次（防御：触发时窗口应已满）
 	}
 	batch := msgs[:batchEnd]
@@ -115,6 +118,10 @@ func (c *Compressor) compress(ctx context.Context, chatID string) error {
 	if _, err := c.window.RemoveByIDs(ctx, chatID, ids); err != nil {
 		return fmt.Errorf("裁剪窗口失败: %w", err)
 	}
+	logger.Info("窗口压缩完成",
+		logger.S("chat_id", chatID),
+		logger.I("batch", len(batch)),
+		logger.I("summary_chars", len(sum.Text)))
 	return nil
 }
 

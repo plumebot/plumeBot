@@ -41,6 +41,8 @@ func (p *ProfileCache) TouchMessage(ctx context.Context, msg entity.Message) {
 	if _, ok := p.groups[gid]; !ok {
 		if prof, cached := p.loadGroupProfile(ctx, gid); cached {
 			p.groups[gid] = prof
+			logger.Debug("群画像已加载（缓存 miss）",
+				logger.S("group_id", gid), logger.B("has_profile", prof != nil))
 		}
 	}
 }
@@ -59,6 +61,7 @@ func (p *ProfileCache) Invalidate(groupID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.groups, groupID)
+	logger.Debug("群画像缓存失效", logger.S("group_id", groupID))
 }
 
 // loadGroupProfile 查询群画像；确认无画像（ErrNotFound）返回 nil 并标记可缓存。

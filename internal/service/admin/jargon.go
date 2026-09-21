@@ -48,7 +48,7 @@ func (s *Service) AddJargon(ctx context.Context, by, groupID, jargon string) (*e
 	if err := s.store.ConfirmJargon(ctx, groupID, jargon); err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return nil, err
 	}
-	s.audit(by, "group_jargon", groupID+"/"+jargon)
+	s.audit(ctx, by, "group_jargon", groupID+"/"+jargon)
 	return &entity.Jargon{GroupID: groupID, Jargon: jargon, Status: "confirmed"}, nil
 }
 
@@ -65,7 +65,7 @@ func (s *Service) DeleteJargon(ctx context.Context, by, groupID, jargon string) 
 	if err := s.store.DeleteJargon(ctx, groupID, jargon); err != nil {
 		return err
 	}
-	s.audit(by, "group_jargon", groupID+"/"+jargon)
+	s.audit(ctx, by, "group_jargon", groupID+"/"+jargon)
 	return nil
 }
 
@@ -74,7 +74,7 @@ func (s *Service) ConfirmJargon(ctx context.Context, by, groupID, jargon string)
 	if err := s.store.ConfirmJargon(ctx, groupID, jargon); err != nil {
 		return nil, err
 	}
-	s.audit(by, "group_jargon", groupID+"/"+jargon)
+	s.audit(ctx, by, "group_jargon", groupID+"/"+jargon)
 	return &entity.Jargon{GroupID: groupID, Jargon: jargon, Status: "confirmed"}, nil
 }
 

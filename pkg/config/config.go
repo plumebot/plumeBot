@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+
+	"plumebot/pkg/logger"
 )
 
 // defaultConfigYAML 是嵌入的默认配置模板，配置文件缺失时写入磁盘。
@@ -266,6 +268,7 @@ func Load(path string) (*Config, error) {
 		if err := writeDefault(path); err != nil {
 			return nil, err
 		}
+		logger.Info("配置文件不存在，已写入默认模板（请按需修改）", logger.S("path", path))
 	}
 
 	v := viper.New()
@@ -283,6 +286,7 @@ func Load(path string) (*Config, error) {
 	// - 模型条目 api_key：每个条目独立读取 PLUMEBOT_APIKEY_<模型名大写>（name 空的条目不参与，
 	//   无法推导稳定变量名）。
 	// - bot.self_id：读取 EnvSelfID，非空时覆盖（与 NapCat 登录 QQ 号共用同一来源）。
+	// 只记录变量**名**，绝不记录其值（密钥/账号不入日志，架构 §17.5）。
 	for i := range cfg.LLM.Models {
 		m := &cfg.LLM.Models[i]
 		if m.Name == "" {
@@ -290,12 +294,16 @@ func Load(path string) (*Config, error) {
 		}
 		if key := os.Getenv(ModelAPIKeyEnvVar(m.Name)); key != "" {
 			m.APIKey = key
+			logger.Info("api_key 已被环境变量覆盖", logger.S("env", ModelAPIKeyEnvVar(m.Name)),
+				logger.S("model", m.Name))
 		}
 	}
 	if selfID := os.Getenv(EnvSelfID); selfID != "" {
 		cfg.Bot.SelfID = selfID
+		logger.Info("bot.self_id 已被环境变量覆盖", logger.S("env", EnvSelfID))
 	}
 
+	logger.Info("配置加载完成", logger.S("path", path))
 	return &cfg, nil
 }
 

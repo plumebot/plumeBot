@@ -67,7 +67,9 @@ func main() { plugin.Serve(&hello{}) }
 - **纯 Go 无 cgo**：SQLite 用 `modernc.org/sqlite`，交叉编译无障碍；
 - **版本化数据库迁移**：逐迁移文件单事务执行 + 版本记录，失败整体回滚下次重试；
 - per-session 锁粒度：不同群/私聊互不阻塞，持锁绝不含 LLM/IO；
-- zap 结构化日志 + lumberjack 滚动切分。
+- zap 结构化日志 + lumberjack 滚动切分：每条消息**一入口一结局**（`消息结局` + outcome 字段可对账），
+  按精确级别分文件落 `~/.plumebot/logs/`（`debug/info/warn/error/fatal.log` + gin 访问 `gin.log`，
+  仅写文件不写终端，统一 10MB 切分 / 5 备份 / 30 天保留）；规范见 `docs/architecture.md` §17。
 
 ## 架构一览
 

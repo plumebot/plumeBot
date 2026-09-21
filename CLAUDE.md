@@ -356,7 +356,7 @@ domain 零依赖
 - `HandleMessage(ctx, msg) error`，中间件命中返回哨兵错误（`domain.ErrRateLimited` / `domain.SensitiveWordError`）；
 - 限流：`golang.org/x/time/rate` 令牌桶，按群（私聊按用户）独立，超时返回 `ErrRateLimited`；
 - 敏感词：`pkg/ahocorasick` 匹配，空词表 = 不过滤；
-- 日志中间件记录 message_id/group_id/user_id/message_type/content，日志不重复（infra/onebot 不再打消息 Info）；
+- 日志规范（完整版见架构 §17 日志规范）：消息日志为**两条锚点**——入口行 `Info("收到消息", message_id, group_id, user_id, message_type, content, mentioned)` + 结局行 `logOutcome(msg, outcome…)`（`Info|Warn("消息结局", …, outcome)`，每条消息**恰好**一入口一结局）；日志不重复（infra/onebot 不再打消息 Info；群管理审计只落 `GroupManager.Execute`；发送成功只 Debug；详情作结局行字段）；结局 outcome 枚举与级别见架构 §17.4；等级语义见 §17.3；输出形态见 §17.1（按精确级别分文件 debug/info/warn/error + fatal.log + gin.log，仅文件不写终端，lumberjack 10MB 滚动）；审计与敏感信息（密钥/token/密码绝不入日志）见 §17.5；**代码落地状态见 roadmap B-046（现状部分未落地，接入新日志以本规范为准绳）**；
 - 末端 tail 持久化消息（写入窗口 + SQLite），窗口满时触发 P3-003 异步窗口压缩（经 memory.Compress，防重入 + 失败冷却）；随后进入 P4-002 命令分支（/开头 → service/plugin 分发 → 校验指令集并记录；校验通过且含 `Reply` 时经 ctx 内 domain.Sender 发送，B-017，见架构 §10.2）；最后对普通消息走 P6-002 回复闭环 respond（P5-001/002 触发判断 + 状态规则命中 → BuildMessages 拼 prompt → Agent GenerateReply（记忆工具经 ctx Session 写入）→ 经 domain.Sender 发送 → 发送成功才窗口追加 bot 回复 + OnReplied 记账，B-038，见架构 §14.4）。
 
 ### 6.4 internal/handler/
