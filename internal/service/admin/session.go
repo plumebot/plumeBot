@@ -16,7 +16,7 @@ type SessionOverview struct {
 	Key        string // 会话键：群号 或 "private:"+QQ
 	Count      int    // 窗口内消息条数
 	LastTS     int64  // 窗口内最后一条消息的时间戳（秒）；空窗口为 0
-	LastRender string // 最后一条消息的展示文本（Render）
+	LastRender string // 最后一条消息的展示文本（ForLLM：含图片描述）
 }
 
 // SessionMessage 窗口内单条消息的展示视图（前端聊天气泡）。
@@ -25,7 +25,7 @@ type SessionMessage struct {
 	Sender    string // 发送者展示名（SenderName 优先，空回落 QQ 号）
 	SendAt    int64  // 消息时间戳（秒）
 	Self      bool   // 是否 bot 自身回复（不含 @ 等入站标记；识别见 isBotReply）
-	Render    string // 展示文本（Render：text + [图片]/[语音]/[视频]/[文件] 标记）
+	Render    string // 展示文本（ForLLM 视图：text + 已描述图片「（图片：描述）」+ 未描述/语音等 [占位] 标记）
 }
 
 // ListSessions 返回当前持有活跃窗口的全部会话概览，按会话键升序（窗口实现已排序，稳定输出）。
@@ -42,7 +42,7 @@ func (s *Service) ListSessions(ctx context.Context) []SessionOverview {
 		ov := SessionOverview{Key: key, Count: len(msgs)}
 		if n := len(msgs); n > 0 {
 			ov.LastTS = msgs[n-1].Timestamp
-			ov.LastRender = msgs[n-1].Render()
+			ov.LastRender = msgs[n-1].ForLLM()
 		}
 		out = append(out, ov)
 	}
@@ -68,7 +68,7 @@ func (s *Service) GetSessionWindow(ctx context.Context, sessionKey string) []Ses
 			Sender:    sender,
 			SendAt:    m.Timestamp,
 			Self:      isBotReply(m.MessageID),
-			Render:    m.Render(),
+			Render:    m.ForLLM(), // ForLLM 视图：已回填描述的图片显示「（图片：描述）」，未描述回落 [图片]
 		})
 	}
 	return out

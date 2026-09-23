@@ -87,7 +87,9 @@
   .more-menu .nv.active { color: #4b6eaf; font-weight: 600; }
 
   /* ── 对话历史：聊天气泡（无图标/图片，头像用首字符色块）── */
-  .chat { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .chat { margin-top: 12px; display: flex; flex-direction: column; gap: 10px;
+          max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+  .hist-more-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; min-height: 32px; }
   .chat-row { display: flex; gap: 8px; align-items: flex-start; }
   .chat-row.me { flex-direction: row-reverse; }
   .avatar { flex: none; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center;
@@ -189,9 +191,13 @@
       <button onclick="loadHistWindow()">查看</button>
       <div class="muted" style="margin-top:8px">
         读取的是 bot 内存中的上下文窗口（每会话 ≤100 条，群聊=群号、私聊=private:QQ）；
-        bot 重启后窗口清空，此时该会话为空态。
+        展示分页：首屏显示最新的一页，可点「加载更早」往前翻；bot 重启后窗口清空即为空态。
       </div>
       <div id="hist-list" class="chat"></div>
+      <div class="hist-more-bar">
+        <button class="gray hidden" id="hist-more" onclick="loadHistOlder()">加载更早</button>
+        <span class="muted" id="hist-info"></span>
+      </div>
     </div>
   </section>
 
@@ -814,11 +820,41 @@ async function loadHistWindow() {
   try {
     const d = await api('/sessions/' + encodeURIComponent(key) + '/window');
     const items = d.items || [];
-    $('hist-list').innerHTML = items.length
-      ? items.map(histRow).join('')
-      : '<div class="hist-empty">该会话暂无活跃窗口——bot 重启后内存窗口为空；更早历史不在本期范围。</div>';
+    // 窗口时间正序（旧→新）；只先渲染最新近一页，聊天面板滚到最底 = 最新消息。
+    histState = { items, shown: Math.min(HIST_PAGE, items.length) };
+    const list = $('hist-list');
+    list.innerHTML = !items.length
+      ? '<div class="hist-empty">该会话暂无活跃窗口——bot 重启后内存窗口为空；更早历史不在本期范围。</div>'
+      : items.slice(-histState.shown).map(histRow).join('');
+    list.scrollTop = list.scrollHeight;
+    updateHistMore();
     flash('已加载 ' + key + ' 窗口：' + items.length + ' 条', true);
   } catch (e) { flash(e.message); }
+}
+// 分页状态：窗口 ≤100 条，客户端切片即可（「首屏最新一页 + 加载更早」，避免长列表一屏看晕）。
+const HIST_PAGE = 20;
+let histState = { items: [], shown: 0 };
+function updateHistMore() {
+  const { items, shown } = histState;
+  const more = $('hist-more');
+  if (!items.length) { more.classList.add('hidden'); $('hist-info').textContent = ''; return; }
+  const all = shown >= items.length;
+  more.classList.toggle('hidden', all);
+  $('hist-info').textContent = all ? '共 ' + items.length + ' 条' : '已显示 ' + shown + ' / ' + items.length + ' 条';
+}
+// 加载更早：在列表头部插入上一页，并修正 scrollTop 保持当前阅读位置不跳动。
+function loadHistOlder() {
+  const { items, shown } = histState;
+  if (!items.length || shown >= items.length) return flash('已显示全部消息');
+  const nextShown = Math.min(items.length, shown + HIST_PAGE);
+  const chunk = items.slice(items.length - nextShown, items.length - shown).map(histRow).join('');
+  histState.shown = nextShown;
+  const list = $('hist-list');
+  const oldH = list.scrollHeight;
+  list.insertAdjacentHTML('afterbegin', chunk);
+  list.scrollTop += (list.scrollHeight - oldH);
+  updateHistMore();
+  if (nextShown >= items.length) flash('已显示全部 ' + items.length + ' 条', true);
 }
 // histRow 渲染一条聊天气泡：bot(self) 居右、群成员居左，头像取发送者首字。
 function histRow(m) {

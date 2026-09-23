@@ -73,19 +73,28 @@ func TestGetSessionWindowView(t *testing.T) {
 	fk.sessions["g1"] = []entity.Message{
 		textMsg("g1", "111", "小明", "早"),
 		{MessageID: "self:9", GroupID: "g1", UserID: "999", SenderName: "PlumeBot",
-			MessageType: "group", Parts: []entity.ContentPart{{Type: entity.PartTypeImage}}, Timestamp: 100},
+			MessageType: "group", Timestamp: 100,
+			Parts: []entity.ContentPart{{Type: entity.PartTypeImage, Description: "一只橘猫在窗台"}}},
+		{MessageID: "m3", GroupID: "g1", UserID: "222", SenderName: "小红",
+			MessageType: "group", Timestamp: 101,
+			Parts: []entity.ContentPart{{Type: entity.PartTypeImage}}},
 	}
 	svc := &Service{win: fk}
 
 	msgs := svc.GetSessionWindow(context.Background(), "g1")
-	if len(msgs) != 2 {
-		t.Fatalf("应返回 2 条, 实际 %d", len(msgs))
+	if len(msgs) != 3 {
+		t.Fatalf("应返回 3 条, 实际 %d", len(msgs))
 	}
 	if msgs[0].Self || msgs[0].Sender != "小明" || msgs[0].Render != "早" {
 		t.Fatalf("首条（非 bot）视图错误: %+v", msgs[0])
 	}
-	if !msgs[1].Self || msgs[1].Sender != "PlumeBot" || msgs[1].Render != "[图片]" {
-		t.Fatalf("bot 回复视图错误: %+v", msgs[1])
+	// bot 回复：self 前缀 → is_self=true，SenderName=botName；已回填描述的图片露出描述。
+	if !msgs[1].Self || msgs[1].Sender != "PlumeBot" || msgs[1].Render != "（图片：一只橘猫在窗台）" {
+		t.Fatalf("bot 回复（含描述）视图错误: %+v", msgs[1])
+	}
+	// 未描述图片（从未被组装触发）回落 [图片] 占位。
+	if msgs[2].Self || msgs[2].Render != "[图片]" {
+		t.Fatalf("未描述图片应回落 [图片], 实际 %+v", msgs[2])
 	}
 }
 

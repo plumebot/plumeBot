@@ -153,9 +153,11 @@ config 新增 admin 段（enabled / port / jwt_secret / token_ttl_seconds，双�
 已完成：P7-003 对话历史只读浏览（会话窗口查看 + 顶栏折叠 + 移动适配，见 roadmap P7-003）：domain.Memory 加
 `ListSessions` + Window 实现（sync.Map 遍历排序）+ MemoryService 转发；service/admin 经消费者侧接口
 `windowReader` 注入只读方法 `ListSessions`/`GetSessionWindow`（`is_self` 依 `self:` 前缀判断、`sender`
-展示名优先回落 QQ 号、`Render` 视图；未知会话返空 items 非 404）；handler/web `GET /api/v1/sessions`
+展示名优先回落 QQ 号、`ForLLM` 视图——已回填描述的图片显示「（图片：描述）」、未描述回落 [图片]；
+未知会话返空 items 非 404）；handler/web `GET /api/v1/sessions`
 与 `GET /api/v1/sessions/:session_key/window`（只读不进审计，会话键 URL 编码）；前端「对话历史」tab
-（活跃会话下拉 + 手动输入、bot(self) 居右气泡、首字色块头像、媒体占位标签、空态提示）+ 顶栏导航折叠
+（活跃会话下拉 + 手动输入、bot(self) 居右气泡、首字色块头像、媒体占位标签、空态提示，
+展示分页「首屏最新一页 + 加载更早」）+ 顶栏导航折叠
 （主行 + 「更多 ▾」收纳人格/运行态/改密）+ 768px 移动适配（汉堡抽屉、.row 单列、表格横滚 tbl-wrap、
 #app-msg 收窄）；index.html ~44KB 维持单文件 go:embed。删除语义记 roadmap B-048 待定案。
 ```
