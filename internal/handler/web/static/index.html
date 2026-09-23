@@ -68,24 +68,88 @@
   #log-pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   #log-pager button { margin: 0; }
   #log-pager button:disabled { opacity: .45; cursor: default; }
+
+  /* ── 顶栏导航：主行 + 「更多 ▾」下拉；窄屏收起为汉堡抽屉 ── */
+  header { position: relative; }
+  .nav-toggle { display: none; background: none; border: 0; color: #eee; font-size: 20px; line-height: 1;
+                cursor: pointer; margin: 0; padding: 2px 8px; }
+  #main-nav { display: flex; align-items: center; }
+  /* > .nv 限定顶栏直接子项；「更多」下拉内项走 .more-menu .nv，不被顶层规则误伤 */
+  #main-nav > .nv { font-size: 13px; color: #9fb0c3; cursor: pointer; margin-left: 14px; padding: 4px 0;
+        border-bottom: 2px solid transparent; white-space: nowrap; }
+  #main-nav > .nv:hover { color: #fff; }
+  #main-nav > .nv.active { color: #fff; border-bottom-color: #4b6eaf; }
+  .nav-more { position: relative; }
+  .more-menu { position: absolute; right: 0; top: 28px; background: #fff; border-radius: 8px;
+               box-shadow: 0 4px 16px rgba(0,0,0,.18); padding: 6px 0; z-index: 20; min-width: 110px; }
+  .more-menu .nv { display: block; color: #444; margin: 0; padding: 8px 16px; border: 0; white-space: nowrap; }
+  .more-menu .nv:hover { color: #444; background: #f2f4f8; }
+  .more-menu .nv.active { color: #4b6eaf; font-weight: 600; }
+
+  /* ── 对话历史：聊天气泡（无图标/图片，头像用首字符色块）── */
+  .chat { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .chat-row { display: flex; gap: 8px; align-items: flex-start; }
+  .chat-row.me { flex-direction: row-reverse; }
+  .avatar { flex: none; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; color: #fff; font-size: 14px; background: #7d8694; }
+  .chat-row.me .avatar { background: #4b6eaf; }
+  .bubble-wrap { max-width: 78%; display: flex; flex-direction: column; }
+  .chat-row.me .bubble-wrap { align-items: flex-end; }
+  .who { font-size: 11px; color: #9aa3ad; margin-bottom: 2px; }
+  .ts { margin-left: 8px; color: #c3c9d2; font-family: Consolas, monospace; }
+  .bubble { display: inline-block; background: #fff; border: 1px solid #e4e7ec; border-radius: 10px;
+            padding: 8px 12px; font-size: 13px; line-height: 1.6; text-align: left;
+            word-break: break-word; white-space: pre-wrap; }
+  .chat-row.me .bubble { background: #eef4fd; border-color: #cfe0f5; }
+  .med { display: inline-block; color: #4b6eaf; background: #eef2f9; border-radius: 4px;
+         padding: 0 5px; font-size: 12px; margin: 0 1px; }
+  .hist-empty { color: #999; font-size: 13px; padding: 18px 0; text-align: center; }
+
+  /* 表格横滚容器（窄屏长文本不撑破布局） */
+  .tbl-wrap { overflow-x: auto; }
+
+  /* ── 手机端适配（768px 断点，零新依赖）── */
+  @media (max-width: 768px) {
+    .nav-toggle { display: block; }
+    #main-nav { position: absolute; top: 52px; left: 0; right: 0; flex-direction: column;
+                align-items: stretch; background: #282c34; padding: 4px 18px 12px; display: none;
+                box-shadow: 0 6px 12px rgba(0,0,0,.2); z-index: 30; }
+    #main-nav.open { display: flex; }
+    #main-nav > .nv { display: block; margin: 0; padding: 10px 0; border-bottom: 1px solid #343b47; }
+    #main-nav > .nv.active { border-bottom-color: #4b6eaf; }
+    .nav-more { margin-top: 2px; }
+    .more-menu { position: static; background: none; box-shadow: none; padding: 0; min-width: 0;
+                 margin-left: 12px; }
+    .more-menu .nv { color: #7f92ab; padding: 8px 0; border: 0; }
+    .more-menu .nv:hover { color: #9fb0c3; background: none; }
+    .row { grid-template-columns: 1fr; }
+    #app-msg { left: 16px; right: 16px; max-width: none; }
+    .bubble-wrap { max-width: 85%; }
+  }
 </style>
 </head>
 <body>
 <span id="app-busy">请求中…</span>
 <header id="app-bar" class="hidden">
   <h1>PlumeBot 管理</h1>
-  <div>
+  <button id="nav-toggle" class="nav-toggle" onclick="toggleNav()" title="菜单">☰</button>
+  <nav id="main-nav">
     <span id="whoami" class="muted"></span>
-    <span class="op" onclick="showTab('cfg')">群配置</span>
-    <span class="op" onclick="showTab('persona')">人格</span>
-    <span class="op" onclick="showTab('profile')">群画像</span>
-    <span class="op" onclick="showTab('jargon')">黑话</span>
-    <span class="op" onclick="showTab('facts')">成员事实</span>
-    <span class="op" onclick="showTab('state')">运行态</span>
-    <span class="op" onclick="showTab('logs')">日志</span>
-    <span class="op" onclick="showTab('pwd')">改密</span>
-    <span class="op" onclick="logout()">退出</span>
-  </div>
+    <a class="nv" data-tab="history" onclick="showTab('history')">对话历史</a>
+    <a class="nv" data-tab="cfg" onclick="showTab('cfg')">群配置</a>
+    <a class="nv" data-tab="profile" onclick="showTab('profile')">群画像</a>
+    <a class="nv" data-tab="jargon" onclick="showTab('jargon')">黑话</a>
+    <a class="nv" data-tab="facts" onclick="showTab('facts')">成员事实</a>
+    <a class="nv" data-tab="logs" onclick="showTab('logs')">日志</a>
+    <span class="nv nav-more" onclick="toggleMore(event)">更多 ▾
+      <span id="more-menu" class="more-menu hidden">
+        <a class="nv" data-tab="persona" onclick="showTab('persona')">人格</a>
+        <a class="nv" data-tab="state" onclick="showTab('state')">运行态</a>
+        <a class="nv" data-tab="pwd" onclick="showTab('pwd')">改密</a>
+      </span>
+    </span>
+    <a class="nv" onclick="logout()">退出</a>
+  </nav>
 </header>
 
 <main id="auth-view">
@@ -110,6 +174,27 @@
 <main id="app-view" class="hidden">
   <div class="msg" id="app-msg" onclick="flash('')" title="点击关闭"></div>
 
+  <section id="tab-history" class="hidden">
+    <div class="card">
+      <h2>对话历史（只读窗口）</h2>
+      <div class="row">
+        <div><label>活跃会话</label>
+          <select id="hist-sessions" onchange="histPick()">
+            <option value="">— 选择活跃会话 —</option>
+          </select>
+        </div>
+        <div><label>或手动输入会话键（群号 / private:QQ）</label><input id="hist-key" placeholder="如 123456789 或 private:10001"></div>
+      </div>
+      <button onclick="loadHistSessions(false)">刷新会话列表</button>
+      <button onclick="loadHistWindow()">查看</button>
+      <div class="muted" style="margin-top:8px">
+        读取的是 bot 内存中的上下文窗口（每会话 ≤100 条，群聊=群号、私聊=private:QQ）；
+        bot 重启后窗口清空，此时该会话为空态。
+      </div>
+      <div id="hist-list" class="chat"></div>
+    </div>
+  </section>
+
   <section id="tab-cfg" class="hidden">
     <div class="card">
       <h2>群配置</h2>
@@ -119,7 +204,7 @@
       </div>
       <button onclick="loadCfgs()">配置列表</button>
       <button onclick="upsertCfgInput()">新建/更新该群</button>
-      <table id="cfg-table"><thead><tr><th>群</th><th>模式</th><th>精力上限</th><th>开关</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="tbl-wrap"><table id="cfg-table"><thead><tr><th>群</th><th>模式</th><th>精力上限</th><th>开关</th><th></th></tr></thead><tbody></tbody></table></div>
       <div id="cfg-editor"></div>
     </div>
   </section>
@@ -128,7 +213,7 @@
     <div class="card">
       <h2>人格模板</h2>
       <button onclick="loadPersonas()">刷新列表</button>
-      <table id="persona-table"><thead><tr><th>agent</th><th>名称</th><th>system_prompt</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="tbl-wrap"><table id="persona-table"><thead><tr><th>agent</th><th>名称</th><th>system_prompt</th><th></th></tr></thead><tbody></tbody></table></div>
     </div>
     <div class="card" id="persona-editor">
       <h2>编辑人格</h2>
@@ -165,7 +250,7 @@
       </div>
       <button onclick="loadJargons()">列出</button>
       <button onclick="addJargon()">添加</button>
-      <table id="jargon-table"><thead><tr><th>黑话</th><th>状态</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="tbl-wrap"><table id="jargon-table"><thead><tr><th>黑话</th><th>状态</th><th></th></tr></thead><tbody></tbody></table></div>
     </div>
   </section>
 
@@ -179,7 +264,7 @@
       </div>
       <button onclick="loadFacts()">查询</button>
       <button onclick="addFact()">补记</button>
-      <table id="fact-table"><thead><tr><th>事实</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="tbl-wrap"><table id="fact-table"><thead><tr><th>事实</th><th></th></tr></thead><tbody></tbody></table></div>
     </div>
   </section>
 
@@ -321,12 +406,29 @@ function enterApp(token) {
 function logout() { showAuth(); }
 
 function showTab(name) {
-  ['cfg','persona','profile','jargon','facts','state','pwd','logs'].forEach(n => $('tab-' + n).classList.add('hidden'));
+  ['history','cfg','persona','profile','jargon','facts','state','pwd','logs'].forEach(n => $('tab-' + n).classList.add('hidden'));
   $('tab-' + name).classList.remove('hidden');
+  // 顶栏导航高亮当前 tab（「更多」内项同样高亮；退出无 data-tab 永不亮）。
+  document.querySelectorAll('#main-nav .nv').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
+  closeNav();
+  if (name === 'history') loadHistSessions(true); // 首次进入拉一次会话列表
   if (name === 'cfg') loadCfgs();
   if (name === 'persona') loadPersonas();
   if (name === 'logs') refreshLogs(); // 首次进入拉一次；此后仅「刷新」按钮触发查询
 }
+
+// ── 顶栏导航：汉堡抽屉（移动端）+「更多」下拉 ──
+function toggleNav() { $('main-nav').classList.toggle('open'); }
+function closeNav() { $('main-nav').classList.remove('open'); $('more-menu').classList.add('hidden'); }
+function toggleMore(e) {
+  e.stopPropagation(); // 阻止冒泡到全局 click，避免立即收起
+  $('more-menu').classList.toggle('hidden');
+}
+// 点击页面其他区域：收起「更多」下拉；点击导航外收起移动端抽屉。
+document.addEventListener('click', e => {
+  if (!e.target.closest('.nav-more')) $('more-menu').classList.add('hidden');
+  if (!e.target.closest('#main-nav') && !e.target.closest('#nav-toggle')) closeNav();
+});
 
 // ── 群配置 ──
 async function loadCfgs() {
@@ -683,6 +785,65 @@ async function changePassword() {
     await api('/auth/password', { method: 'PUT', body: { old_password: $('pwd-old').value, new_password: $('pwd-new').value } });
     flash('密码已修改', true); $('pwd-old').value = ''; $('pwd-new').value = '';
   } catch (e) { flash(e.message); }
+}
+
+// ── 对话历史（P7-003：只读窗口）──
+// 会话下拉（GET /sessions）+ 手动输入会话键；「查看」拉窗口渲染聊天气泡。
+async function loadHistSessions(quiet) {
+  try {
+    const d = await api('/sessions');
+    const items = d.items || [];
+    const sel = $('hist-sessions');
+    sel.innerHTML = items.length
+      ? '<option value="">— 选择活跃会话 —</option>' + items.map(o =>
+        `<option value="${escA(o.key)}">${esc(o.key)}（${o.count} 条${o.last_render ? ' · ' + esc(o.last_render.slice(0, 20)) : ''}）</option>`).join('')
+      : '<option value="">— 无活跃会话（bot 重启后窗口为空）—</option>';
+    if (!quiet) flash('已刷新会话列表：' + items.length + ' 个活跃会话', true);
+  } catch (e) { flash(e.message); }
+}
+// 下拉选中即自动填入会话键并查看。
+function histPick() {
+  const key = $('hist-sessions').value;
+  if (!key) return;
+  $('hist-key').value = key;
+  loadHistWindow();
+}
+async function loadHistWindow() {
+  const key = $('hist-key').value.trim() || $('hist-sessions').value;
+  if (!key) return flash('请选择或输入会话键');
+  try {
+    const d = await api('/sessions/' + encodeURIComponent(key) + '/window');
+    const items = d.items || [];
+    $('hist-list').innerHTML = items.length
+      ? items.map(histRow).join('')
+      : '<div class="hist-empty">该会话暂无活跃窗口——bot 重启后内存窗口为空；更早历史不在本期范围。</div>';
+    flash('已加载 ' + key + ' 窗口：' + items.length + ' 条', true);
+  } catch (e) { flash(e.message); }
+}
+// histRow 渲染一条聊天气泡：bot(self) 居右、群成员居左，头像取发送者首字。
+function histRow(m) {
+  const side = m.is_self ? 'me' : 'other';
+  const avatar = (m.sender || '?').charAt(0);
+  return `<div class="chat-row ${side}">
+    <div class="avatar">${esc(avatar)}</div>
+    <div class="bubble-wrap">
+      <div class="who">${esc(m.sender)}<span class="ts">${esc(fmtHistTS(m.send_at))}</span></div>
+      <div class="bubble">${renderHist(m.render)}</div>
+    </div>
+  </div>`;
+}
+// renderHist 先转义防 XSS，再给媒体占位标记（[图片] 等）加底色突出。
+function renderHist(s) {
+  return esc(s).replace(/\[(图片|语音|视频|文件)\]/g, '<span class="med">[$1]</span>');
+}
+// fmtHistTS 窗口内时间紧凑展示：今天 HH:MM / M月D日 HH:MM；无时间戳显示 —。
+function fmtHistTS(unixSec) {
+  if (!unixSec) return '—';
+  const d = new Date(unixSec * 1000);
+  if (isNaN(d)) return String(unixSec);
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  return d.toDateString() === new Date().toDateString() ? '今天 ' + hm
+    : (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
 }
 
 // ── 工具 ──

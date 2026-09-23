@@ -5,6 +5,7 @@ package web
 //   - handler_auth.go    认证域 handler（注册/登录/改密/me/status）
 //   - handler_group_config.go / handler_persona.go / handler_group_profile.go /
 //     handler_jargon.go / handler_member_fact.go / handler_state.go  配置域 handler
+//   - handler_session.go  会话窗口域 handler（P7-003：活跃会话列表 + 窗口只读查看）
 //   - middleware.go      中间件：verifyAuth（JWT 鉴权）+ ipLimiter（每 IP 限流）
 //   - response.go        响应编排 helper：ok / fail / handleError + ctx Key
 //   - dto/request        与前端交互的请求体结构（含包络与业务码在 dto/response）
@@ -67,6 +68,7 @@ func NewRouter(svc *admin.Service, logSvc *logsvc.Service, mgr *jwt.Manager) *gi
 	newJargonHandler(svc).RegisterRoutes(authed)
 	newMemberFactHandler(svc).RegisterRoutes(authed)
 	newStateHandler(svc).RegisterRoutes(authed)
+	newSessionHandler(svc).RegisterRoutes(authed)
 	newLogHandler(logSvc).RegisterRoutes(authed)
 
 	return r

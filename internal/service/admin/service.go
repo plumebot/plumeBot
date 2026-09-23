@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 	"plumebot/internal/service/memory"
 	"plumebot/pkg/jwt"
 	"plumebot/pkg/logger"
@@ -13,6 +14,16 @@ import (
 // *memory.MemoryService 实现了该接口；测试可注入假实现断言失效被触发。
 type groupProfileInvalidator interface {
 	InvalidateGroupProfile(groupID string)
+}
+
+// windowReader 是 Service 对「内存上下文窗口只读」的最小依赖面（消费者侧接口，P7-003）。
+// *memory.MemoryService 实现了该接口；测试可注入假实现。
+type windowReader interface {
+	// GetWindow 返回会话窗口内消息（会话键：群聊=GroupID，私聊="private:"+UserID）；
+	// 会话不存在返回空切片（非错误）。
+	GetWindow(ctx context.Context, sessionID string) ([]entity.Message, error)
+	// ListSessions 返回当前持有活跃窗口的全部会话键。
+	ListSessions() []string
 }
 
 // clientIPCtxKey 是来源 IP 在 context 中的键类型（私有，避免与其他包键冲突）。
@@ -31,16 +42,18 @@ func ClientIPFrom(ctx context.Context) string {
 }
 
 // Service 管理后端配置读写（P7-001，单 service 按配置域分组方法，见 docs/admin-web-api-plan.md §4.3）。
-// 依赖注入：domain.Storage（配置读写）+ 群画像缓存失效器（*memory.MemoryService）+ *jwt.Manager（签发）。
+// 依赖注入：domain.Storage（配置读写）+ 群画像缓存失效器（*memory.MemoryService）+
+// 窗口只读（*memory.MemoryService）+ *jwt.Manager（签发）。
 type Service struct {
 	store domain.Storage
 	mem   groupProfileInvalidator
+	win   windowReader
 	mgr   *jwt.Manager
 }
 
 // NewService 创建管理后端 Service。
 func NewService(store domain.Storage, mem *memory.MemoryService, mgr *jwt.Manager) *Service {
-	return &Service{store: store, mem: mem, mgr: mgr}
+	return &Service{store: store, mem: mem, win: mem, mgr: mgr}
 }
 
 // audit 记录管理面写操作（谁/何时/改了哪个配置目标/来源 IP，见计划书 §11 安全考虑 6）。

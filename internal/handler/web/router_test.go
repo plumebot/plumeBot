@@ -4,6 +4,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler/web/dto/response"
 	"plumebot/internal/infra/logfile"
 	"plumebot/internal/infra/sqlite"
@@ -31,6 +33,12 @@ var testLogTS = float64(time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC).UnixNano()
 // 日志读取用真实 logfile.Reader（临时日志目录，预置 info/error 样本各一条，见 writeTestLogs）。
 func newTestRouter(t *testing.T) (*gin.Engine, *jwt.Manager) {
 	t.Helper()
+	return newTestRouterWithWindow(t, memory.NewWindow())
+}
+
+// newTestRouterWithWindow 同 newTestRouter，但注入指定窗口（P7-003 会话窗口测试预置消息用）。
+func newTestRouterWithWindow(t *testing.T, win *memory.Window) (*gin.Engine, *jwt.Manager) {
+	t.Helper()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("打开测试数据库失败: %v", err)
@@ -38,7 +46,7 @@ func newTestRouter(t *testing.T) (*gin.Engine, *jwt.Manager) {
 	t.Cleanup(func() { store.Close() })
 	mgr := jwt.NewManager("test-secret", time.Hour)
 	// 用真 MemoryService：群画像写/删后的缓存失效走真实链路（nil 会导致 nil 指针 panic）。
-	memSvc := memory.NewMemoryService(memory.NewWindow(), store, nil, memory.BuilderConfig{})
+	memSvc := memory.NewMemoryService(win, store, nil, memory.BuilderConfig{})
 	svc := admin.NewService(store, memSvc, mgr)
 
 	logDir := t.TempDir()
@@ -267,6 +275,7 @@ func TestResourceAuthRequired(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/groups/configs", "/api/v1/personas", "/api/v1/groups/g1/profile",
 		"/api/v1/groups/g1/jargons", "/api/v1/member-facts", "/api/v1/sessions/g1/state",
+		"/api/v1/sessions", "/api/v1/sessions/g1/window",
 	} {
 		if status, _ := doJSON(t, r, http.MethodGet, path, "", nil); status != http.StatusUnauthorized {
 			t.Errorf("资源端点 %s 无 token 应 401, 实际 %d", path, status)
@@ -526,3 +535,79 @@ func TestLogEndpoint(t *testing.T) {
 	}
 }
 
+
+// TestSessionEndpoints 会话窗口域端点（P7-003）：会话列表 + 窗口只读 + 空态 + 鉴权 + 私聊会话键
+// URL 编码访问。窗口为真 memory.Window 预置消息（不经 event 链路，窗口即唯一数据源）。
+func TestSessionEndpoints(t *testing.T) {
+	win := memory.NewWindow()
+	ctx := context.Background()
+	now := time.Now().Unix()
+	mk := func(id, groupID, userID, name, msg string, ts int64) entity.Message {
+		return entity.Message{
+			MessageID: id, GroupID: groupID, UserID: userID, SenderName: name, MessageType: "group",
+			Parts: []entity.ContentPart{{Type: entity.PartTypeText, Text: msg}}, Timestamp: ts,
+		}
+	}
+	if _, err := win.AppendMessage(ctx, mk("m1", "g1", "10001", "小明", "早", now)); err != nil {
+		t.Fatalf("追加消息失败: %v", err)
+	}
+	if _, err := win.AppendMessage(ctx, mk("self:1", "g1", "bot", "PlumeBot", "你好", now+1)); err != nil {
+		t.Fatalf("追加 bot 回复失败: %v", err)
+	}
+	if _, err := win.AppendMessage(ctx, entity.Message{
+		MessageID: "self:2", UserID: "u9", MessageType: "private",
+		Parts: []entity.ContentPart{{Type: entity.PartTypeText, Text: "私聊"}}, Timestamp: now + 2,
+	}); err != nil {
+		t.Fatalf("追加私聊消息失败: %v", err)
+	}
+
+	r, _ := newTestRouterWithWindow(t, win)
+	token := registerAndLogin(t, r)
+
+	// 会话列表：g1 + private:u9 两个会话，按键升序；g1 概览含条数与最近消息文本。
+	status, env := doJSON(t, r, http.MethodGet, "/api/v1/sessions", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("会话列表应 200, 实际 %d", status)
+	}
+	items := env["data"].(map[string]any)["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("应 2 个活跃会话, 实际 %v", items)
+	}
+	g1, _ := items[0].(map[string]any)
+	if g1["key"] != "g1" || g1["count"] != float64(2) || g1["last_render"] != "你好" || g1["last_ts"] != float64(now+1) {
+		t.Fatalf("g1 概览字段错误: %v", g1)
+	}
+
+	// 窗口查看：时间正序 2 条，首条非 self（展示名优先），次条 self（bot 回复）。
+	status, env = doJSON(t, r, http.MethodGet, "/api/v1/sessions/g1/window", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("窗口应 200, 实际 %d", status)
+	}
+	msgs := env["data"].(map[string]any)["items"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("g1 窗口应 2 条, 实际 %d", len(msgs))
+	}
+	w0, _ := msgs[0].(map[string]any)
+	w1, _ := msgs[1].(map[string]any)
+	if w0["is_self"] != false || w0["sender"] != "小明" || w0["render"] != "早" {
+		t.Fatalf("首条窗口消息错误: %v", w0)
+	}
+	if w1["is_self"] != true || w1["sender"] != "PlumeBot" || w1["render"] != "你好" {
+		t.Fatalf("bot 消息错误: %v", w1)
+	}
+
+	// 私聊会话键含冒号，经 URL 编码访问（形态对齐 /sessions/:session_key/state）。
+	status, env = doJSON(t, r, http.MethodGet, "/api/v1/sessions/private%3Au9/window", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("私聊窗口应 200, 实际 %d", status)
+	}
+	if msgs := env["data"].(map[string]any)["items"].([]any); len(msgs) != 1 {
+		t.Fatalf("私聊窗口应 1 条, 实际 %d", len(msgs))
+	}
+
+	// 未知会话（无窗口）→ 200 + 空 items（非 404，前端渲染空态）。
+	status, env = doJSON(t, r, http.MethodGet, "/api/v1/sessions/nosuch/window", token, nil)
+	if status != http.StatusOK || len(env["data"].(map[string]any)["items"].([]any)) != 0 {
+		t.Fatalf("未知会话应 200 空 items, 实际 %d %v", status, env)
+	}
+}

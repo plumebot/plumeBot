@@ -285,3 +285,31 @@ func TestWindowConcurrentSessions(t *testing.T) {
 		}
 	}
 }
+
+// TestWindowListSessions 列出活跃会话：空窗口返回空；多会话按键升序（稳定输出），
+// 私聊独立键（private:QQ）与群聊并列。
+func TestWindowListSessions(t *testing.T) {
+	w := NewWindow()
+	keys, err := w.ListSessions()
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("空窗口应返回空键, 实际 %v %v", keys, err)
+	}
+
+	w.AppendMessage(context.Background(), groupMsg("b", "1"))
+	w.AppendMessage(context.Background(), groupMsg("a", "2"))
+	w.AppendMessage(context.Background(), entity.Message{UserID: "u1", MessageType: "private", Parts: textParts("x")})
+
+	keys, err = w.ListSessions()
+	if err != nil {
+		t.Fatalf("列出会话失败: %v", err)
+	}
+	want := []string{"a", "b", "private:u1"}
+	if len(keys) != len(want) {
+		t.Fatalf("会话数 = %d, want %d (%v)", len(keys), len(want), keys)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Fatalf("会话键顺序错误, got %v want %v", keys, want)
+		}
+	}
+}

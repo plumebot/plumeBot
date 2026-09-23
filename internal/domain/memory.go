@@ -15,4 +15,7 @@ type Memory interface {
 	GetWindow(ctx context.Context, sessionID string) ([]entity.Message, error)
 	// RemoveByIDs 从会话窗口精确移除指定 MessageID 的消息（压缩批次归档后调用），返回实际移除数量。
 	RemoveByIDs(ctx context.Context, sessionID string, ids []string) (int, error)
+	// ListSessions 返回当前持有活跃窗口的全部会话键（P7-003 管理前端会话下拉用）。
+	// 返回键已排序（稳定输出）；无活跃会话返回空切片。
+	ListSessions() ([]string, error)
 }

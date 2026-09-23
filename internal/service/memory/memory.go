@@ -6,6 +6,7 @@ import (
 	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/config"
+	"plumebot/pkg/logger"
 )
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,17 @@ func (s *MemoryService) persist(ctx context.Context, sessionID string, msg entit
 // GetWindow 返回会话窗口消息（会话键：群聊=GroupID，私聊="private:"+UserID）。
 func (s *MemoryService) GetWindow(ctx context.Context, sessionID string) ([]entity.Message, error) {
 	return s.memory.GetWindow(ctx, sessionID)
+}
+
+// ListSessions 返回当前持有活跃窗口的全部会话键（P7-003 管理前端会话下拉用）；
+// 窗口实现不产生错误，读取失败仅告警且返回空切片，不阻断管理面。
+func (s *MemoryService) ListSessions() []string {
+	keys, err := s.memory.ListSessions()
+	if err != nil {
+		logger.Warn("列出活跃会话失败", logger.Err(err))
+		return []string{}
+	}
+	return keys
 }
 
 // GetGroupProfile 返回缓存的群画像。

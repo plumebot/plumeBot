@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"plumebot/internal/domain/entity"
@@ -96,6 +97,19 @@ func (w *Window) GetWindow(_ context.Context, sessionID string) ([]entity.Messag
 	}
 	logger.Debug("窗口读取", logger.S("session", sessionID), logger.I("size", len(out)))
 	return out, nil
+}
+
+// ListSessions 返回当前持有活跃窗口的全部会话键，已排序（稳定输出，P7-003 管理前端会话下拉用）。
+// 会话注册表为 sync.Map 无序，排序保证多次调用输出一致；无活跃会话返回空切片。
+func (w *Window) ListSessions() ([]string, error) {
+	var keys []string
+	w.sessions.Range(func(k, _ any) bool {
+		keys = append(keys, k.(string))
+		return true
+	})
+	sort.Strings(keys)
+	logger.Debug("窗口会话列表", logger.I("count", len(keys)))
+	return keys, nil
 }
 
 // BackfillParts 在窗口锁内把 messageID 对应消息的 Parts 更新为最新副本（含回填的图片描述，B-040）。

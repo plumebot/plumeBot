@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Go 版本 | 1.26.4 (go.mod: `go 1.26.4`) |
 | 模块名 | `plumebot` |
 | 入口 | `cmd/bot/main.go` |
-| 当前阶段 | 第七阶段：管理后端（P7-001 管理配置 API、P7-002 网页日志浏览已完结；第六阶段 P6-003 端到端压测待实现） |
+| 当前阶段 | 第七阶段：管理后端（P7-001 管理配置 API、P7-002 网页日志浏览、P7-003 对话历史只读浏览已完结；第六阶段 P6-003 端到端压测待实现） |
 | 任务台账 | `docs/roadmap.md`（阶段任务表 + 「待办与遗留事项」B 台账，完成即删行） |
 
 ```bash
@@ -150,6 +150,14 @@ config 新增 admin 段（enabled / port / jwt_secret / token_ttl_seconds，双�
 `group_mgmt_enabled` 固定写 1，写库失败仅告警不阻断回复链路）。后果：该群此后**独立于全局**
 （`cfg.Control` 变更不再影响它）；管理面 DELETE 删行**非持久**（下条群消息按当时全局值重建）；
 `configured:false` 仅对该群**尚未被触达**时可达。见 `docs/admin-web-api-plan.md` §7.2 与架构 §9.2。
+已完成：P7-003 对话历史只读浏览（会话窗口查看 + 顶栏折叠 + 移动适配，见 roadmap P7-003）：domain.Memory 加
+`ListSessions` + Window 实现（sync.Map 遍历排序）+ MemoryService 转发；service/admin 经消费者侧接口
+`windowReader` 注入只读方法 `ListSessions`/`GetSessionWindow`（`is_self` 依 `self:` 前缀判断、`sender`
+展示名优先回落 QQ 号、`Render` 视图；未知会话返空 items 非 404）；handler/web `GET /api/v1/sessions`
+与 `GET /api/v1/sessions/:session_key/window`（只读不进审计，会话键 URL 编码）；前端「对话历史」tab
+（活跃会话下拉 + 手动输入、bot(self) 居右气泡、首字色块头像、媒体占位标签、空态提示）+ 顶栏导航折叠
+（主行 + 「更多 ▾」收纳人格/运行态/改密）+ 768px 移动适配（汉堡抽屉、.row 单列、表格横滚 tbl-wrap、
+#app-msg 收窄）；index.html ~44KB 维持单文件 go:embed。删除语义记 roadmap B-048 待定案。
 ```
 
 禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：
