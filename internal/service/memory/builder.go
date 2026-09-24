@@ -114,11 +114,20 @@ func (s *MemoryService) describeMessage(ctx context.Context, m *entity.Message, 
 		desc, err := s.describer.Describe(ctx, m.Parts[j])
 		if err != nil {
 			logger.Warn("图片描述失败，回退 [图片]",
-				logger.S("message_id", m.MessageID), logger.Err(err))
+				logger.S("message_id", m.MessageID),
+				logger.S("url", m.Parts[j].URL),
+				logger.S("file_hash", hashPrefix(m.Parts[j].FileHash)),
+				logger.Err(err))
 			continue
 		}
 		m.Parts[j].Description = desc
 		described++
+		// 成功探针（图片描述链路排障）：描述是否落到消息上、是否持久化/回填，
+		// 与 infra/ai 的缓存命中日志对照即可判断「重复描述」是缓存未命中还是回填失效。
+		logger.Debug("图片描述成功",
+			logger.S("message_id", m.MessageID),
+			logger.S("file_hash", hashPrefix(m.Parts[j].FileHash)),
+			logger.I("desc_chars", len(desc)))
 		if m.MessageID == "" {
 			continue // 空 ID 无可靠落库目标，不持久化/不回填
 		}
@@ -143,6 +152,14 @@ func (s *MemoryService) backfillParts(ctx context.Context, sessionID, messageID 
 	if bw, ok := s.memory.(backfillWindow); ok {
 		bw.BackfillParts(ctx, sessionID, messageID, parts)
 	}
+}
+
+// hashPrefix 返回 FileHash 前 8 位用于日志（避免整串刷屏，足够分辨同一/不同图）。
+func hashPrefix(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 // sameMessage 判断窗口消息 m 是否为当前消息 cur。

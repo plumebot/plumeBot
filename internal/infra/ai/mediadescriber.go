@@ -86,34 +86,90 @@ func NewMediaDescriber(ctx context.Context, cfg config.Config) (domain.MediaDesc
 	}, nil
 }
 
-// Describe 生成图片的文本描述。远程 http(s) URL → 直传 URL 给视觉模型（provider 侧拉图，
-// 不本地下载，B-027 增强）；直传失败（过期签名 URL / provider 不可达 qpic / 不支持远程图）→
-// 本地拉取 → base64 回退重试一次。本地路径/base64 → 取字节 → base64 透传。均复用 ToSchema
-// 构造 user 多模态消息（text + image）→ 前置 system → 视觉模型单次调用。
+// Describe 生成图片的文本描述。
+// 缓存键（B-027 增强）：FileHash（convert 层从 OneBot file/file_md5 提取，一图一值）→
+// Base64 字节 md5 → URL 字符串兜底。**Key 补齐**：http(s) URL 且无 FileHash 时，先本地拉一次
+// 字节算出内容 md5 作为键（QQ 图片 URL 带时效签名、同图每轮 URL 不同，URL 兜底键每轮都不同 →
+// 缓存永不命中）；此时字节已在手，描述直接走 base64，不再依赖 provider 侧拉图。
+// 描述来源：预拉取字节 → base64；http(s) URL → 直传 URL（provider 侧拉图），直传失败 →
+// 本地拉取 → base64 回退重试一次；本地路径/base64 → 取字节 → base64 透传。
+// 均复用 ToSchema 构造 user 多模态消息（text + image）→ 前置 system → 视觉模型单次调用。
 // 命中成功缓存（B-027）直接返回；命中失败冷却（BUG-3）直接返回失败，均不触达模型。
-// 日志：缓存命中/冷却命中 Debug、视觉调用记模型调用度量 Info（架构 §17.2 infra/ai）—
-// 排障「图片一直是 [图片]」有依据（缓存失效、合并接口不可达、视觉调用失败一目了然）。
+// 日志（架构 §17.2 infra/ai）：请求/键来源/缓存命中·未命中/写入缓存 Debug，拉图失败与模型
+// 调用失败 Warn、模型调用度量 Info——排障「图片一直是 [图片]」「描述重复调用」有依据。
 func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPart) (string, error) {
 	l := logger.From(ctx) // 携带 trace_id（会话键）；未注入时回退全局
 	key := imageContentKey(part)
-	if key != "" {
-		d.mu.Lock()
-		if desc, ok := d.cache[key]; ok {
-			d.mu.Unlock()
-			l.Debug("图片描述缓存命中", logger.S("key", key))
-			return desc, nil
+	origin := keyOrigin(part)
+
+	// 逐 part 判定探针（架构 §17.2 infra/ai）：Debug 级，比对两轮日志即可定位「为何不命中」。
+	// 无 FileHash 的 http 图片会看到 key_origin=url + 逐轮不同的 url/签名字段——即为缓存失效根因。
+	l.Debug("图片描述请求",
+		logger.S("key", key),
+		logger.S("key_origin", origin),
+		logger.S("file_hash", fileHashPrefix(part.FileHash)),
+		logger.S("url", part.URL),
+		logger.B("has_base64", part.Base64 != ""))
+
+	// 命中判定：值缓存命中直接返回；失败冷却期内直接失败（不触达网络/模型）。
+	// 需在两个时机各查一次——预拉取前用初始键（无 FileHash 的不可达图在冷却期内不再逐轮预拉取）、
+	// 补齐后用内容键（同图跨轮/跨 URL 命中同一键，即本修复的核心）。
+	hitOrCooled := func(k, org string) (string, error, bool) {
+		desc, okDesc, cooled := d.lookupDesc(k)
+		if okDesc {
+			l.Debug("图片描述缓存命中", logger.S("key", k), logger.S("key_origin", org))
+			return desc, nil, true
 		}
-		if retryAt, ok := d.fails[key]; ok && time.Now().Before(retryAt) {
-			d.mu.Unlock()
+		if cooled {
 			l.Debug("图片描述失败冷却命中（BUG-3）",
-				logger.S("key", key), logger.S("retry_after", descRetryAfter.String()))
-			return "", fmt.Errorf("图片描述在失败冷却中（BUG-3，%s 内重试）: %s", descRetryAfter, key)
+				logger.S("key", k), logger.S("retry_after", descRetryAfter.String()))
+			return "", fmt.Errorf("图片描述在失败冷却中（BUG-3，%s 内重试）: %s", descRetryAfter, k), true
 		}
-		d.mu.Unlock()
+		return "", nil, false
+	}
+	if desc, err, handled := hitOrCooled(key, origin); handled {
+		return desc, err
 	}
 
+	// 内容键补齐（**必须在缓存查找之前**）：http(s) URL 且无 FileHash 时——
+	// QQ 图片 URL 带时效签名，同图每轮 URL 不同，url: 兜底键每轮都不同 → 缓存永远不命中。
+	// 故先本地拉一次字节算出内容 md5 作为最终键；字节已在手，描述直接用 base64
+	//（不再依赖 provider 侧拉图，也顺带规避 qpic 不可达）。仅此场景多付一次本地拉取。
+	initialKey := key
+	var preload []byte // 预拉取字节（非空则描述走 base64）
+	var preMIME string // 预拉取 MIME
+	if part.FileHash == "" && isRemoteURL(part) {
+		data, mime, err := loadImageBytes(ctx, d.http, part)
+		if err != nil {
+			// 拉取失败不阻断：保留 url: 键，回落 URL 直传（provider 侧可能可达）；
+			// 若直传也失败，下方回退分支会再拉一次并给出可诊断错误。
+			l.Debug("图片描述 URL 预拉取失败，缓存键保持 URL 兜底",
+				logger.S("key", key), logger.Err(err))
+		} else {
+			preload, preMIME = data, mime
+			key = "md5:" + md5Hex(data)
+			origin = "fetched_md5"
+			l.Debug("图片描述无 FileHash，已按拉取字节计算内容 MD5 作缓存键",
+				logger.S("key", key), logger.I("bytes", len(data)))
+		}
+	}
+	if key != initialKey {
+		if desc, err, handled := hitOrCooled(key, origin); handled {
+			return desc, err
+		}
+	}
+	l.Debug("图片描述缓存未命中，进入模型调用",
+		logger.S("key", key), logger.S("key_origin", origin))
+
 	start := time.Now()
-	msgs, err := buildDescribeUser(ctx, d.http, part)
+	var msgs []*schema.Message
+	var err error
+	switch {
+	case preload != nil:
+		msgs, err = buildDescribeUserBase64(preload, preMIME)
+	default:
+		msgs, err = buildDescribeUser(ctx, d.http, part)
+	}
 	if err != nil {
 		d.markFail(key)
 		l.Warn("图片描述加载失败",
@@ -126,6 +182,7 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 		// URL 直传失败（过期签名 URL / 海外 API 无法访问 qpic / 自建服务不支持远程图）：
 		// 本地拉取 → base64 回退重试一次；仅远程 URL 生效，本地/Base64 不进此分支。
 		if data, mime, ferr := loadImageBytes(ctx, d.http, part); ferr == nil {
+			l.Debug("图片描述 URL 直传失败，回退本地拉取 base64 重试", logger.I("bytes", len(data)))
 			var fb []*schema.Message
 			if fb, err = buildDescribeUserBase64(data, mime); err == nil {
 				out, err = d.cm.Generate(ctx, describeInput(fb))
@@ -141,7 +198,8 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 	}
 	if err != nil {
 		d.markFail(key)
-		fields = append(fields, logger.Err(err))
+		fields = append(fields,
+			logger.S("key", key), logger.S("key_origin", origin), logger.Err(err))
 		l.Warn("图片描述模型调用失败", fields...)
 		return "", fmt.Errorf("视觉推理失败: %w", err)
 	}
@@ -152,9 +210,10 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 			logger.I("completion_tokens", u.CompletionTokens),
 			logger.I("total_tokens", u.TotalTokens))
 	}
+	fields = append(fields, logger.S("key", key), logger.S("key_origin", origin))
 	l.Info("模型调用", fields...)
 
-	// 只缓存成功结果（失败走 markFail 冷却）。
+	// 只缓存成功结果（失败走 markFail 冷却）。键即上方补齐后的内容键（同图跨轮/跨 URL 同键）。
 	if key != "" && out.Content != "" {
 		d.mu.Lock()
 		if d.cache == nil {
@@ -162,8 +221,15 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 		}
 		if len(d.cache) < maxDescCacheEntries {
 			d.cache[key] = out.Content
+			l.Debug("图片描述已写入缓存",
+				logger.S("key", key), logger.S("key_origin", origin), logger.I("cache_size", len(d.cache)))
+		} else {
+			l.Warn("图片描述缓存已达软上限，本条未缓存",
+				logger.I("max_entries", maxDescCacheEntries), logger.S("key", key))
 		}
 		d.mu.Unlock()
+	} else if key != "" && out.Content == "" {
+		l.Warn("图片描述返回空内容，未缓存", logger.S("key", key), logger.S("key_origin", origin))
 	}
 	return out.Content, nil
 }
@@ -231,12 +297,33 @@ func (d *EinoMediaDescriber) markFail(key string) {
 	d.fails[key] = time.Now().Add(descRetryAfter)
 }
 
+// lookupDesc 在锁内查一次描述缓存与失败冷却：命中值→(desc,true,false)；
+// 冷却期内→("",false,true)；均未命中→("",false,false)。空键视作未命中（不缓存、不记冷却）。
+func (d *EinoMediaDescriber) lookupDesc(key string) (string, bool, bool) {
+	if key == "" {
+		return "", false, false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if desc, ok := d.cache[key]; ok {
+		return desc, true, false
+	}
+	if retryAt, ok := d.fails[key]; ok && time.Now().Before(retryAt) {
+		return "", false, true
+	}
+	return "", false, false
+}
+
 // imageContentKey 图片内容哈希键（B-027 增强）：优先级 FileHash（convert 层从 OneBot
 // file/file_md5 提取或 base64 字节推导，一图一值跨 URL 共享）→ Base64（按解码后字节 md5，
 // 内容寻址）→ URL 字符串兜底。FileHash 仅当存在可描述来源（URL/Base64 非空）时生效——
 // 避免「仅 FileHash 无来源」的占位段记入失败冷却，把同内容另有 URL 的来源一并冷却 60s。
+//
+// 注意：URL 兜底键是**完整 URL 字符串**（含 query），QQ 图片 URL 带时效签名 → 同图每轮键不同、
+// 缓存不命中；此时应由 convert 层提供 FileHash，或在拉图后按实际字节回填内容键（见 Describe）。
 func imageContentKey(p entity.ContentPart) string {
-	if p.FileHash != "" && (p.URL != "" || p.Base64 != "") {
+	hasSource := p.URL != "" || p.Base64 != ""
+	if p.FileHash != "" && hasSource {
 		return "md5:" + p.FileHash
 	}
 	if p.Base64 != "" {
@@ -250,6 +337,35 @@ func imageContentKey(p entity.ContentPart) string {
 		return "url:" + p.URL
 	}
 	return ""
+}
+
+// md5Hex 计算字节内容 md5（32 位小写 hex）。与 imagecache.Save 文件名、onebot 侧 FileHash 算法一致。
+func md5Hex(data []byte) string {
+	sum := md5.Sum(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// keyOrigin 返回当前键的来源标签（key_origin 日志字段）：file_hash / base64 / url，空键返回 none。
+// 排障「缓存为何不命中」时，一眼看出键是内容寻址还是退化成 URL 字符串。
+func keyOrigin(p entity.ContentPart) string {
+	if p.FileHash != "" && (p.URL != "" || p.Base64 != "") {
+		return "file_hash"
+	}
+	if p.Base64 != "" {
+		return "base64"
+	}
+	if p.URL != "" {
+		return "url"
+	}
+	return "none"
+}
+
+// fileHashPrefix 返回 FileHash 前 8 位用于日志（避免整串刷屏，足够分辨同一/不同图）。
+func fileHashPrefix(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 // loadImageBytes 按 part 的媒体来源加载图片字节，并返回可用的 MIME 类型。

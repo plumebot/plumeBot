@@ -77,8 +77,9 @@ func TestEinoMediaDescriberDescribeLocalFile(t *testing.T) {
 	runDescribeAndAssert(t, entity.ContentPart{Type: entity.PartTypeImage, URL: path})
 }
 
-// TestEinoMediaDescriberDescribeHTTPURLDirect 远程 URL 直传（B-027 增强）：describer 不本地拉图，
-// 直接把 URL 交给视觉模型（provider 侧拉图），server 应零请求。
+// TestEinoMediaDescriberDescribeHTTPURLDirect URL 直传（B-027 增强）：**带 FileHash** 时键已由
+// FileHash 给出，无需本地拉图，直接把 URL 交给视觉模型（provider 侧拉图），server 应零请求。
+// 注：无 FileHash 的 http URL 会先本地拉字节补算内容键（见 TestEinoMediaDescriberHTTPNoFileHashFetch）。
 func TestEinoMediaDescriberDescribeHTTPURLDirect(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -92,7 +93,8 @@ func TestEinoMediaDescriberDescribeHTTPURLDirect(t *testing.T) {
 	}}
 	d := &EinoMediaDescriber{cm: fake, http: &http.Client{}}
 
-	got, err := d.Describe(context.Background(), entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL})
+	got, err := d.Describe(context.Background(),
+		entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL, FileHash: "deadbeefdeadbeefdeadbeefdeadbeef"})
 	if err != nil {
 		t.Fatalf("Describe 失败: %v", err)
 	}
@@ -290,8 +292,9 @@ func (m *flakyFirstModel) Stream(context.Context, []*schema.Message, ...model.Op
 	return nil, errors.New("flakyFirstModel: Stream 未实现")
 }
 
-// TestEinoMediaDescriberURLDirectFallback URL 直传失败 → 回退本地拉取→base64 重试一次。
-// server 应恰好被拉 1 次；第二次调用的 user part 为 base64 透传（内容 = server 返回的 PNG）。
+// TestEinoMediaDescriberURLDirectFallback URL 直传失败 → 回退 base64 重试一次。
+// **带 FileHash** 时键无需本地拉图，URL 直传优先：server 应恰好被拉 1 次（仅在直传失败后回退时），
+// 第二次调用的 user part 为 base64 透传（内容 = server 返回的 PNG）。
 func TestEinoMediaDescriberURLDirectFallback(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -303,7 +306,8 @@ func TestEinoMediaDescriberURLDirectFallback(t *testing.T) {
 	fm := &flakyFirstModel{}
 	d := &EinoMediaDescriber{cm: fm, http: &http.Client{}}
 
-	got, err := d.Describe(context.Background(), entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL})
+	got, err := d.Describe(context.Background(),
+		entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL, FileHash: "deadbeefdeadbeefdeadbeefdeadbeef"})
 	if err != nil {
 		t.Fatalf("回退后 Describe 应成功: %v", err)
 	}
@@ -323,6 +327,91 @@ func TestEinoMediaDescriberURLDirectFallback(t *testing.T) {
 	if parts[1].Image.MIMEType != "image/png" {
 		t.Errorf("回退 mime 应为 image/png, 实际 %q", parts[1].Image.MIMEType)
 	}
+}
+
+// TestEinoMediaDescriberHTTPNoFileHashFetch 无 FileHash 的 http URL（QQ 图片带时效签名 URL 的典型形态）：
+// 先本地拉字节按内容 md5 作缓存键，再走模型。
+//   - 拉取成功：描述直接走 base64（字节已在手，不依赖 provider 再拉一次 URL）；
+//   - 同图换 URL（签名变化）→ 命中同一内容键，模型只调 1 次（**缓存失效修复的核心断言**）。
+func TestEinoMediaDescriberHTTPNoFileHashFetch(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write(mustDecodePNG(t))
+	}))
+	defer srv.Close()
+
+	fake := &fakeChatModel{script: []*schema.Message{
+		schema.AssistantMessage("一只猫。", nil),
+	}}
+	d := &EinoMediaDescriber{cm: fake, http: &http.Client{}}
+
+	// 两次「同图不同 URL」：模拟 QQ 图片 URL 的时效签名逐轮变化。
+	p1 := entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL + "/a.png?term=1&sign=aaa"}
+	p2 := entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL + "/a.png?term=2&sign=bbb"}
+	first, err := d.Describe(context.Background(), p1)
+	if err != nil {
+		t.Fatalf("首次 Describe 失败: %v", err)
+	}
+	second, err := d.Describe(context.Background(), p2)
+	if err != nil {
+		t.Fatalf("二次 Describe 失败: %v", err)
+	}
+	if first != second {
+		t.Errorf("同内容异 URL 应命中缓存返回一致描述: %q vs %q", first, second)
+	}
+	if len(fake.inputs) != 1 {
+		t.Errorf("同图不同 URL 应只调模型 1 次, 实际 %d", len(fake.inputs))
+	}
+	// 首次描述走 base64（预拉取字节），base64 内容应等于 server 返回的 PNG。
+	parts := fake.inputs[0][1].UserInputMultiContent
+	if parts[1].Image.Base64Data == nil || *parts[1].Image.Base64Data != testPNGBase64 {
+		t.Errorf("预拉取后应走 base64 透传, 实际 %+v", parts[1].Image)
+	}
+	// 缓存键应为内容 md5（fetched_md5），非 URL 串。
+	wantKey := "md5:" + md5Hex(mustDecodePNG(t))
+	if _, ok := d.cache[wantKey]; !ok {
+		t.Errorf("缓存应写入内容键 %q, 实际键集合 %v", wantKey, mapKeys(d.cache))
+	}
+}
+
+// TestEinoMediaDescriberHTTPNoFileHashCooldown 无 FileHash 的 http URL 失败后记冷却：
+// 冷却期内直接失败、**不再本地预拉取**——否则每轮组装都白付一次拉取（不可达图还带 30s 超时）。
+// 锁定「冷却判定先于预拉取」的查询顺序。
+func TestEinoMediaDescriberHTTPNoFileHashCooldown(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		http.Error(w, "gone", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	// 空脚本 fakeChatModel：每次 Generate 均报错 → 强制走「直传失败 → 回退拉图失败」路径。
+	d := &EinoMediaDescriber{cm: &fakeChatModel{}, http: &http.Client{}}
+	part := entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL + "/a.png"}
+
+	if _, err := d.Describe(context.Background(), part); err == nil {
+		t.Fatal("不可达图片应报错")
+	}
+	first := hits.Load()
+	if first == 0 {
+		t.Fatal("首次应尝试本地预拉取")
+	}
+	if _, err := d.Describe(context.Background(), part); err == nil || !strings.Contains(err.Error(), "失败冷却") {
+		t.Fatalf("冷却期内应直接返回失败, 实际 %v", err)
+	}
+	if hits.Load() != first {
+		t.Errorf("冷却期内不应再次拉图, 拉取次数 %d → %d", first, hits.Load())
+	}
+}
+
+// mapKeys 返回缓存键集合（失败信息可读用）。
+func mapKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 // TestEinoMediaDescriberFailCooldown 描述失败记冷却（审查 BUG-3）：同一失败图片在冷却期内

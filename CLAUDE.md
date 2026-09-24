@@ -114,7 +114,9 @@ domain.Control 两方法 ShouldReply→Decision + OnReplied；service/control �
 entity.Message.SessionKey、覆盖逻辑消重，见架构 §9.2）。
 已完成：第六阶段 P6-001 Prompt 组装联调（service/memory BuildMessages 五段组装：
 persona(现查 persona 表，改库即时生效) + 会话画像(群画像+成员事实+confirmed 黑话，注入上限
-llm.prompt) + 历史摘要 → system，窗口④ + 当前消息⑤；at→text、图片惰性描述(describer 缓存+预算)
+llm.prompt) + 历史摘要 → system，窗口④ + 当前消息⑤；at→text、图片惰性描述(describer 缓存+预算；
+缓存键=FileHash→拉取字节 md5→URL，B-049 起「有 http URL 无 FileHash」先拉字节算内容 md5 补键，
+同图跨轮/跨 URL 命中同一键，见 infra/ai/mediadescriber.go)
 + 描述写回 UpdateMessageParts；persona 不再经 Instruction 注入，见架构 §6/§7.3 与 §5.6）。
 已完成：第六阶段 P6-002 完整消息链路（回复闭环接线，见架构 §9.2/§10.2/§14.4 与 roadmap P6-002）：
 触发判断命中 → BuildMessages → Agent GenerateReply（记忆工具经 ctx 注入的 Session 写入 member_facts/

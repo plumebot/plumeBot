@@ -14,6 +14,7 @@ import (
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/infra/imagecache"
 	"plumebot/pkg/base64util"
+	"plumebot/pkg/logger"
 )
 
 // toMessage 将 ZeroBot 消息事件转换为领域层 entity.Message。
@@ -99,6 +100,18 @@ func toParts(ev message.Message, cache *imagecache.Cache) []entity.ContentPart {
 				} else if h := normalizeFileHash(seg.Data["file_md5"]); h != "" {
 					p.FileHash = h
 				}
+			}
+			// 排障探针（图片描述缓存，架构 §17.2）：FileHash 是描述缓存的内容寻址键，
+			// 缺失时退化为带时效签名的 URL 键 → 同图每轮不命中。Debug 级、只记形态不记全量数据；
+			// 无 FileHash 的 http 图正是缓存失效根因（MediaDescriber 会拉字节补算 md5 兜底）。
+			if p.FileHash == "" {
+				logger.Debug("图片段无 FileHash（描述缓存将退化 URL 键，或由描述器拉字节补算）",
+					logger.S("url", p.URL),
+					logger.S("file_field", seg.Data["file"]),
+					logger.S("file_md5_field", seg.Data["file_md5"]))
+			} else {
+				logger.Debug("图片段 FileHash",
+					logger.S("file_hash", p.FileHash), logger.S("url", p.URL))
 			}
 			parts = append(parts, p)
 		case "record":
