@@ -37,14 +37,23 @@ func (h *SessionHandler) list(c *gin.Context) {
 	ok(c, response.Items[response.SessionOverview]{Items: items})
 }
 
-// window 返回指定会话窗口内消息（时间正序）。会话不存在/窗口为空返回空 items（非 404）。
+// window 返回指定会话窗口内消息（时间正序）+ 摘要热链（旧→新）。
+// 会话不存在/窗口为空返回空 items（非 404）；摘要读内存热链，空则为空 summaries。
 func (h *SessionHandler) window(c *gin.Context) {
-	msgs := h.svc.GetSessionWindow(c.Request.Context(), c.Param("session_key"))
+	ctx, key := c.Request.Context(), c.Param("session_key")
+	msgs := h.svc.GetSessionWindow(ctx, key)
 	items := make([]response.SessionMessage, 0, len(msgs))
 	for _, m := range msgs {
 		items = append(items, response.SessionMessage{
 			MessageID: m.MessageID, Sender: m.Sender, SendAt: m.SendAt, Self: m.Self, Render: m.Render,
 		})
 	}
-	ok(c, response.Items[response.SessionMessage]{Items: items})
+	sums := h.svc.GetSessionSummaries(ctx, key)
+	summaries := make([]response.SessionSummary, 0, len(sums))
+	for _, s := range sums {
+		summaries = append(summaries, response.SessionSummary{
+			Text: s.Text, Keywords: s.Keywords, Decisions: s.Decisions, CreatedAt: s.CreatedAt,
+		})
+	}
+	ok(c, response.SessionWindow{Items: items, Summaries: summaries})
 }

@@ -11,20 +11,29 @@ import (
 	"plumebot/internal/domain/entity"
 )
 
-// fakeSessionMem 实现 domain.SessionWindowReader（GetWindow/ListSessions），并补 InvalidateGroupProfile
-// 同时满足 domain.GroupProfileInvalidator（Service 两个消费面共用注入面）。
+// fakeSessionMem 实现 domain.SessionWindowReader（GetWindow/ListSessions）与
+// domain.SessionSummaryReader（GetSummaries），并补 InvalidateGroupProfile 同时满足
+// domain.GroupProfileInvalidator（Service 三个消费面共用注入面）。
 type fakeSessionMem struct {
-	sessions map[string][]entity.Message
+	sessions  map[string][]entity.Message
+	summaries map[string][]entity.Summary
 }
 
 func newFakeSessionMem() *fakeSessionMem {
-	return &fakeSessionMem{sessions: map[string][]entity.Message{}}
+	return &fakeSessionMem{
+		sessions:  map[string][]entity.Message{},
+		summaries: map[string][]entity.Summary{},
+	}
 }
 
 func (f *fakeSessionMem) InvalidateGroupProfile(string) {}
 
 func (f *fakeSessionMem) GetWindow(_ context.Context, key string) ([]entity.Message, error) {
 	return f.sessions[key], nil
+}
+
+func (f *fakeSessionMem) GetSummaries(_ context.Context, chatID string) []entity.Summary {
+	return f.summaries[chatID]
 }
 
 func (f *fakeSessionMem) ListSessions() []string {
@@ -115,5 +124,30 @@ func TestGetSessionWindowEmptyAndFallback(t *testing.T) {
 	fk.sessions["g2"] = []entity.Message{}
 	if msgs := svc.GetSessionWindow(context.Background(), "g2"); len(msgs) != 0 {
 		t.Fatalf("空窗口应返回空, 实际 %+v", msgs)
+	}
+}
+
+// TestGetSessionSummariesView 摘要只读视图：字段映射（隐去 chat_id/seq）+ 未知会话空切片。
+func TestGetSessionSummariesView(t *testing.T) {
+	fk := newFakeSessionMem()
+	fk.summaries["g1"] = []entity.Summary{
+		{ChatID: "g1", Seq: 1, Text: "聊了周末安排", Keywords: []string{"周末"}, CreatedAt: 100},
+		{ChatID: "g1", Seq: 2, Text: "决定周六爬山", Decisions: []string{"周六爬山"}, CreatedAt: 200},
+	}
+	svc := &Service{sum: fk}
+
+	sums := svc.GetSessionSummaries(context.Background(), "g1")
+	if len(sums) != 2 {
+		t.Fatalf("应返回 2 条摘要, 实际 %d", len(sums))
+	}
+	if sums[0].Text != "聊了周末安排" || sums[0].CreatedAt != 100 || len(sums[0].Keywords) != 1 {
+		t.Fatalf("首条摘要视图错误: %+v", sums[0])
+	}
+	if len(sums[1].Decisions) != 1 || sums[1].Decisions[0] != "周六爬山" {
+		t.Fatalf("次条摘要决定错误: %+v", sums[1])
+	}
+	// 未知会话（无热链）→ 空切片（非错误）。
+	if got := svc.GetSessionSummaries(context.Background(), "nosuch"); len(got) != 0 {
+		t.Fatalf("未知会话应返回空, 实际 %+v", got)
 	}
 }

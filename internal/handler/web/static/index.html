@@ -107,6 +107,18 @@
          padding: 0 5px; font-size: 12px; margin: 0 1px; }
   .hist-empty { color: #999; font-size: 13px; padding: 18px 0; text-align: center; }
 
+  /* ── 更早的对话纪要（会话摘要热链，窗口上方）── */
+  .sum-wrap { margin-top: 12px; border: 1px dashed #d8dee7; border-radius: 10px;
+              padding: 10px 12px; background: #fafbfd; }
+  .sum-head { font-size: 12px; color: #7d8694; display: flex; align-items: center; gap: 6px; }
+  .sum-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .sum-card { background: #fff; border: 1px solid #e9edf3; border-radius: 8px; padding: 8px 10px; }
+  .sum-meta { font-size: 11px; color: #a6adb8; margin-bottom: 4px; }
+  .sum-text { font-size: 13px; line-height: 1.6; color: #4a5461; word-break: break-word; white-space: pre-wrap; }
+  .sum-chips { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .chipk { font-size: 11px; color: #4b6eaf; background: #eef2f9; border-radius: 4px; padding: 1px 6px; }
+  .chipd { font-size: 11px; color: #8a6d3b; background: #fdf6e3; border-radius: 4px; padding: 1px 6px; }
+
   /* 表格横滚容器（窄屏长文本不撑破布局） */
   .tbl-wrap { overflow-x: auto; }
 
@@ -192,7 +204,9 @@
       <div class="muted" style="margin-top:8px">
         读取的是 bot 内存中的上下文窗口（每会话 ≤100 条，群聊=群号、私聊=private:QQ）；
         展示分页：首屏显示最新的一页，可点「加载更早」往前翻；bot 重启后窗口清空即为空态。
+        窗口上方为「更早的对话纪要」——该会话已压缩进摘要的旧对话（内存摘要链，随窗口一同刷新）。
       </div>
+      <div id="hist-sum" class="sum-wrap hidden"></div>
       <div id="hist-list" class="chat"></div>
       <div class="hist-more-bar">
         <button class="gray hidden" id="hist-more" onclick="loadHistOlder()">加载更早</button>
@@ -820,16 +834,37 @@ async function loadHistWindow() {
   try {
     const d = await api('/sessions/' + encodeURIComponent(key) + '/window');
     const items = d.items || [];
+    const sums = d.summaries || [];
+    renderHistSummaries(sums);
     // 窗口时间正序（旧→新）；只先渲染最新近一页，聊天面板滚到最底 = 最新消息。
     histState = { items, shown: Math.min(HIST_PAGE, items.length) };
     const list = $('hist-list');
-    list.innerHTML = !items.length
-      ? '<div class="hist-empty">该会话暂无活跃窗口——bot 重启后内存窗口为空；更早历史不在本期范围。</div>'
-      : items.slice(-histState.shown).map(histRow).join('');
+    list.innerHTML = items.length
+      ? items.slice(-histState.shown).map(histRow).join('')
+      : `<div class="hist-empty">该会话暂无活跃窗口${sums.length ? '（更早的对话见上方纪要）' : '——bot 重启后内存窗口与摘要链均为空'}。</div>`;
     list.scrollTop = list.scrollHeight;
     updateHistMore();
-    flash('已加载 ' + key + ' 窗口：' + items.length + ' 条', true);
+    flash('已加载 ' + key + '：摘要 ' + sums.length + ' 条 · 窗口 ' + items.length + ' 条', true);
   } catch (e) { flash(e.message); }
+}
+// renderHistSummaries 渲染「更早的对话纪要」区块（内存摘要热链，旧→新）。
+// 不区分一级/二级：管理面只需知道「这段更早的对话已被压缩成纪要」。空则整块隐藏。
+function renderHistSummaries(sums) {
+  const box = $('hist-sum');
+  if (!sums.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="sum-head">更早的对话纪要（已压缩进摘要 · ${sums.length} 条）</div>` +
+    '<div class="sum-list">' + sums.map(sumCard).join('') + '</div>';
+  box.classList.remove('hidden');
+}
+// sumCard 渲染单条摘要卡片：时间 + 摘要文本 + 关键词/关键决定 chips。
+function sumCard(s) {
+  const chips = (s.keywords || []).map(k => `<span class="chipk">${esc(k)}</span>`).join('')
+    + (s.decisions || []).map(d => `<span class="chipd">${esc(d)}</span>`).join('');
+  return `<div class="sum-card">
+    <div class="sum-meta">摘要 · ${esc(fmtHistTS(s.created_at))}</div>
+    <div class="sum-text">${esc(s.text)}</div>
+    ${chips ? `<div class="sum-chips">${chips}</div>` : ''}
+  </div>`;
 }
 // 分页状态：窗口 ≤100 条，客户端切片即可（「首屏最新一页 + 加载更早」，避免长列表一屏看晕）。
 const HIST_PAGE = 20;

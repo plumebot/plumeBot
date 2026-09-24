@@ -79,6 +79,10 @@ type Admin interface {
 	ListSessions(ctx context.Context) []entity.SessionOverview
 	// GetSessionWindow 返回会话窗口内消息的只读视图（时间正序）；会话不存在/窗口为空返回空切片。
 	GetSessionWindow(ctx context.Context, sessionKey string) []entity.SessionMessage
+	// GetSessionSummaries 返回会话摘要热链的只读视图（旧→新），供管理前端展示「窗口之前已压缩的历史纪要」。
+	// 读内存热链（会话首次访问会先从 SQLite 归档回灌最新若干条）；
+	// 不区分一级压缩/二级融合（管理面只需「这里有一段更早的纪要」这一信息）。
+	GetSessionSummaries(ctx context.Context, sessionKey string) []entity.SessionSummary
 }
 
 // SessionWindowReader 是 Admin 对「内存上下文窗口只读」的最小依赖面（消费侧接口，
@@ -95,4 +99,11 @@ type SessionWindowReader interface {
 // 定义在 domain 层）。*memory.MemoryService 实现了该接口；测试可注入假实现断言失效被触发。
 type GroupProfileInvalidator interface {
 	InvalidateGroupProfile(groupID string)
+}
+
+// SessionSummaryReader 是 Admin 对「会话摘要热链只读」的最小依赖面（消费侧接口，
+// 定义在 domain 层）。*memory.MemoryService 实现了该接口（GetSummaries 转发 SummaryStore 内存热链）。
+type SessionSummaryReader interface {
+	// GetSummaries 返回会话摘要热链（旧→新）；会话不存在/归档为空返回空切片。
+	GetSummaries(ctx context.Context, chatID string) []entity.Summary
 }

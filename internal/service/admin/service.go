@@ -30,17 +30,18 @@ func ClientIPFrom(ctx context.Context) string {
 
 // Service 实现 domain.Admin 管理后端配置读写（P7-001，单 service 按配置域分组方法，见 docs/admin-web-api-plan.md §4.3）。
 // 依赖注入：domain.Storage（配置读写）+ 群画像缓存失效器（*memory.MemoryService）+
-// 窗口只读（*memory.MemoryService）+ *jwt.Manager（签发）。
+// 窗口只读（*memory.MemoryService）+ 摘要热链只读（*memory.MemoryService）+ *jwt.Manager（签发）。
 type Service struct {
 	store domain.Storage
 	mem   domain.GroupProfileInvalidator
 	win   domain.SessionWindowReader
+	sum   domain.SessionSummaryReader
 	mgr   *jwt.Manager
 }
 
 // NewService 创建管理后端 Service。
 func NewService(store domain.Storage, mem *memory.MemoryService, mgr *jwt.Manager) *Service {
-	return &Service{store: store, mem: mem, win: mem, mgr: mgr}
+	return &Service{store: store, mem: mem, win: mem, sum: mem, mgr: mgr}
 }
 
 // audit 记录管理面写操作（谁/何时/改了哪个配置目标/来源 IP，见计划书 §11 安全考虑 6）。

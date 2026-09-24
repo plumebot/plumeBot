@@ -37,13 +37,20 @@ func newTestRouter(t *testing.T) (*gin.Engine, *jwt.Manager) {
 }
 
 // newTestRouterWithWindow 同 newTestRouter，但注入指定窗口（P7-003 会话窗口测试预置消息用）。
-func newTestRouterWithWindow(t *testing.T, win *memory.Window) (*gin.Engine, *jwt.Manager) {
+// seedSummaries 预置归档摘要（conversation_summary 表）——摘要热链会话首次访问时惰性回灌，
+// 故预置即在 /window 的 summaries 中可见（顺带覆盖回灌路径）。
+func newTestRouterWithWindow(t *testing.T, win *memory.Window, seedSummaries ...entity.Summary) (*gin.Engine, *jwt.Manager) {
 	t.Helper()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("打开测试数据库失败: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
+	for _, s := range seedSummaries {
+		if err := store.SaveSummary(context.Background(), s); err != nil {
+			t.Fatalf("预置摘要失败: %v", err)
+		}
+	}
 	mgr := jwt.NewManager("test-secret", time.Hour)
 	// 用真 MemoryService：群画像写/删后的缓存失效走真实链路（nil 会导致 nil 指针 panic）。
 	memSvc := memory.NewMemoryService(win, store, nil, memory.BuilderConfig{})
@@ -561,7 +568,10 @@ func TestSessionEndpoints(t *testing.T) {
 		t.Fatalf("追加私聊消息失败: %v", err)
 	}
 
-	r, _ := newTestRouterWithWindow(t, win)
+	r, _ := newTestRouterWithWindow(t, win, entity.Summary{
+		ChatID: "g1", Seq: 1, Text: "早前聊了周末安排",
+		Keywords: []string{"周末"}, Decisions: []string{"周六爬山"}, CreatedAt: now,
+	})
 	token := registerAndLogin(t, r)
 
 	// 会话列表：g1 + private:u9 两个会话，按键升序；g1 概览含条数与最近消息文本。
@@ -578,10 +588,18 @@ func TestSessionEndpoints(t *testing.T) {
 		t.Fatalf("g1 概览字段错误: %v", g1)
 	}
 
-	// 窗口查看：时间正序 2 条，首条非 self（展示名优先），次条 self（bot 回复）。
+	// 窗口查看：时间正序 2 条，首条非 self（展示名优先），次条 self（bot 回复）；
+	// summaries 同响应返回（该会话预置 1 条归档摘要，经热链回灌可见）。
 	status, env = doJSON(t, r, http.MethodGet, "/api/v1/sessions/g1/window", token, nil)
 	if status != http.StatusOK {
 		t.Fatalf("窗口应 200, 实际 %d", status)
+	}
+	sums := env["data"].(map[string]any)["summaries"].([]any)
+	if len(sums) != 1 {
+		t.Fatalf("g1 应 1 条摘要, 实际 %v", sums)
+	}
+	if s0, _ := sums[0].(map[string]any); s0["text"] != "早前聊了周末安排" || s0["created_at"] != float64(now) {
+		t.Fatalf("摘要字段错误: %v", s0)
 	}
 	msgs := env["data"].(map[string]any)["items"].([]any)
 	if len(msgs) != 2 {
@@ -605,9 +623,10 @@ func TestSessionEndpoints(t *testing.T) {
 		t.Fatalf("私聊窗口应 1 条, 实际 %d", len(msgs))
 	}
 
-	// 未知会话（无窗口）→ 200 + 空 items（非 404，前端渲染空态）。
+	// 未知会话（无窗口/无摘要）→ 200 + 空 items + 空 summaries（非 404，前端渲染空态）。
 	status, env = doJSON(t, r, http.MethodGet, "/api/v1/sessions/nosuch/window", token, nil)
-	if status != http.StatusOK || len(env["data"].(map[string]any)["items"].([]any)) != 0 {
-		t.Fatalf("未知会话应 200 空 items, 实际 %d %v", status, env)
+	d := env["data"].(map[string]any)
+	if status != http.StatusOK || len(d["items"].([]any)) != 0 || len(d["summaries"].([]any)) != 0 {
+		t.Fatalf("未知会话应 200 空 items/summaries, 实际 %d %v", status, env)
 	}
 }

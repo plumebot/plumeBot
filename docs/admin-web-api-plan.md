@@ -326,6 +326,20 @@ CREATE TABLE IF NOT EXISTS admin_user (
   consecutive_count / rest_until）；不存在返回 4041；
 - 只读性由**接口层面保证**（service 只暴露 Get），杜绝误改运行态。
 
+### 7.8 会话窗口与摘要纪要（P7-003，只读）
+
+| 方法 | 路径 | 入参 | 出参 | 说明 |
+|------|------|------|------|------|
+| GET | `/api/v1/sessions` | — | `{"items":[{"key","count","last_ts","last_render"}]}` | 活跃会话下拉（`domain.Memory.ListSessions`，按键升序） |
+| GET | `/api/v1/sessions/{session_key}/window` | — | `{"items":[...],"summaries":[...]}` | 窗口消息（时间正序）+ 摘要热链（旧→新）一并返回 |
+
+- `session_key`：群聊=群号，私聊=`private:QQ`（URL 编码）；未知会话返回空数组（非 404）；
+- `summaries` 元素 `{text, keywords, decisions, created_at}`：**读内存摘要热链**
+  （`domain.SessionSummaryReader` → `SummaryStore.GetAll`，会话首次访问会先从 SQLite 归档惰性回灌最新若干条）；
+  **不区分一级压缩/二级融合**（管理面只需「这里有一段更早的纪要」）；仅显示当前热链，被融合覆盖的一级原件只在归档表；
+- 前端「对话历史」tab 渲染为气泡列表**上方**的「更早的对话纪要」区块——摘要是窗口之前那段已压缩的历史，与窗口语义连贯；
+- 两个端点均**只读不进审计**（与 `bot_state` 一致）。
+
 ---
 
 ## 8. 鉴权与 JWT 设计（定案 C：golang-jwt/v5 + DB 账号）

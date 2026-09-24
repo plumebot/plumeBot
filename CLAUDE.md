@@ -163,7 +163,15 @@ config 新增 admin 段（enabled / port / jwt_secret / token_ttl_seconds，双�
 （活跃会话下拉 + 手动输入、bot(self) 居右气泡、首字色块头像、媒体占位标签、空态提示，
 展示分页「首屏最新一页 + 加载更早」）+ 顶栏导航折叠
 （主行 + 「更多 ▾」收纳人格/运行态/改密）+ 768px 移动适配（汉堡抽屉、.row 单列、表格横滚 tbl-wrap、
-#app-msg 收窄）；index.html ~44KB 维持单文件 go:embed。删除语义记 roadmap B-048 待定案。
+#app-msg 收窄）；index.html ~48KB 维持单文件 go:embed。删除语义记 roadmap B-048 待定案。
+另：**摘要纪要区块**（P7-003 补充）——`GET /sessions/:key/window` 响应扩展为
+`{items, summaries}`（一次拉取一次渲染），新增 `domain.SessionSummaryReader` 消费接口
+（`*memory.MemoryService.GetSummaries` → `SummaryStore` 内存热链，会话首次访问惰性回灌归档）
++ `entity.SessionSummary` 展示视图（Text/Keywords/Decisions/CreatedAt，隐去 chat_id/seq）
++ `domain.Admin.GetSessionSummaries` + dto `response.SessionSummary`/`SessionWindow`；
+前端在气泡列表**上方**渲染「更早的对话纪要」区块（摘要=窗口之前已压缩的历史，语义连贯），
+**不区分一级压缩/二级融合**（管理面只需「这里有一段更早的纪要」），仅显示当前热链
+（被二级融合覆盖的一级原件只在 conversation_summary 归档表，本期不展示）。
 ```
 
 禁止提前实现（跨阶段禁令，后续阶段能力勿提前实装）：
@@ -337,7 +345,7 @@ domain 零依赖
 - **插件形态 = 子进程 stdio，.so 废弃，go-plugin 定案**（P4-002 前置定案）：Go `plugin` 包（`-buildmode=plugin` / `plugin.Open()`）仅支持 Linux/FreeBSD/macOS——Windows 开发机不可用、禁交叉编译；且无卸载 API（非真热，只能热添加）、与主程序同进程（panic 拖垮整个 bot）、插件需与主程序完全同版本编译。插件统一为**独立进程 + stdio 通信**（HashiCorp go-plugin，net/rpc 变体，免 protoc）：跨平台、进程隔离、真热重载（重启子进程）。插件遵循**指令集协议**（§8.6）——`entity.PluginRequest{Command, Args, Session}` → `entity.PluginResult{Reply, Actions}`，插件零权限只声明意图、宿主唯一执行者；`domain.Plugin` 签名为 `Execute(ctx, entity.PluginRequest) (entity.PluginResult, error)`。**回复执行已由 P6-002 落地**（校验通过后经 B-003 Sender 发送 `Reply`）；群管理动作执行已由 B-015 落地（dispatchCommand → executeActions 经 `domain.GroupManager` 执行，与 AI 工具共用执行路径，见 §15 决策）。**协议与接线抽为独立 SDK module（P6-004）**：`plugin-sdk/entity`（wire 类型）+ `plugin-sdk/plugin`（`Serve`/`NewClient`），宿主 `internal/domain/entity` 协议类型改类型别名、`ValidatePluginResult` 转发，`cmd/bot` 直接用 SDK `NewClient`；第三方插件只依赖 plugin-sdk 即可独立编写（不 import 宿主 internal），gob 类型名因同 module 路径保持一致。
 - **群管理执行器 = per-event ctx 注入，护栏集中在 GroupManager.Execute，工具/插件共用单一执行路径**（B-015 定案，架构 §15）：`domain.GroupManager` 仅一个方法 `Execute(ctx, entity.GroupAction) error`（统一入口，AI 工具与插件 Actions 走同一护栏链，护栏不重复、不旁路）；onebot 层 matcher 闭包构造 per-event `botGroupManager`（持 `*zero.Ctx` + `domain.Storage` + botID）经 `WithGroupManager` 注入 ctx，与 Session/Sender 同构（工具为共享单例，经 `GroupManagerFrom(ctx)` 取执行器）。三道护栏集中在 `Execute`：① per-group 开关 `group_config.group_mgmt_enabled`（002 迁移，默认 1 开；`GetGroupConfig` 无配置行 = 默认开，0 = 显式关闭）；② 触发者与 bot 都须为群主/管理员（`get_group_member_info` 查 role，查询失败/无 role 一律拒绝，fail-closed）；③ mute 时长钳制 30 天（超限平台拒绝）。动作经 `ctx.CallAction` 检查 `APIResponse.Status/RetCode` 反馈成功与否——`SetGroupBan/SetGroupKick/SetGroupCard` 封装吞掉响应（void），动作失败无法反馈，高危能力静默失败不可接受。
 - **SQLite 迁移 = 版本记录式（B-015 起，B-034 基础设施顺带建立）**：`migrate()` 建 `schema_migrations` 表（version PK + applied_at），每迁移文件在**单事务内**执行并记录，失败整体回滚不记版本（下次启动重试，避免「ALTER 成功但未记录 → 重启 duplicate column」）；旧库 001 重放靠 IF NOT EXISTS 幂等。001 不再改动，新增列一律新建 `00N_*.sql`（SQLite 无 `ADD COLUMN IF NOT EXISTS`，幂等依赖版本记录）。B-034 完整任务（校验等）仍后置。
-- **管理后端契约分层 = 接口在 domain / 通信结构体在 entity / json 归 web dto**（P7 层引用合规定案）：`domain.Admin` 接口（方法签名以 entity 承载）+ 消费侧接口 `domain.SessionWindowReader`/`domain.GroupProfileInvalidator` 全部定义在 domain 层，`service/admin.Service` 实现接口，`handler/web` 依赖 `domain.Admin` 而非具体类型（与其他 service → `domain.Control`/`domain.Memory`/`domain.LogReader` 一致）；通信/出参结构体（`entity.AuthResult`/`entity.SessionOverview`/`entity.SessionMessage`）入 `domain/entity` 保持纯结构（不带 json tag，同 `entity.LogQuery` 先例）；HTTP 入参/出参的 json 序列化由 `handler/web/dto`（request/response）独家接管——entity 不背 json 责任，handler 在 web 边界做 entity↔dto 转换。
+- **管理后端契约分层 = 接口在 domain / 通信结构体在 entity / json 归 web dto**（P7 层引用合规定案）：`domain.Admin` 接口（方法签名以 entity 承载）+ 消费侧接口 `domain.SessionWindowReader`/`domain.GroupProfileInvalidator`/`domain.SessionSummaryReader` 全部定义在 domain 层，`service/admin.Service` 实现接口，`handler/web` 依赖 `domain.Admin` 而非具体类型（与其他 service → `domain.Control`/`domain.Memory`/`domain.LogReader` 一致）；通信/出参结构体（`entity.AuthResult`/`entity.SessionOverview`/`entity.SessionMessage`/`entity.SessionSummary`）入 `domain/entity` 保持纯结构（不带 json tag，同 `entity.LogQuery` 先例）；HTTP 入参/出参的 json 序列化由 `handler/web/dto`（request/response）独家接管——entity 不背 json 责任，handler 在 web 边界做 entity↔dto 转换。
 - **entity 无 json tag（唯一例外 = `entity.ContentPart` 的持久化形态）**（json 职责收口定案）：`entity.GroupConfig` / `entity.LogEntry` / `entity.LogPage` 的 json tag 已移除，出参形态改由 `response.GroupConfig` / `response.LogEntry` / `response.LogPage` 自持（handler 做 entity→dto 映射，wire 键名/顺序零变化）；`entity.ContentPart` 保留 tag 是因为 `messages.parts` 列为 JSON 文本、由 `infra/sqlite` 直接 `json.Marshal/Unmarshal`——tag 是**持久化形态约定**（列内键名），非 web 出参形态，属有意豁免（`entity.Message`/`SavedMessage` 之类从未带 tag，无需处理）。判据：有无非 web 的序列化消费方。
 
 ## 6. 模块说明

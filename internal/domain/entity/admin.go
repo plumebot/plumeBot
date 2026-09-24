@@ -28,3 +28,12 @@ type SessionMessage struct {
 	Self      bool   // 是否 bot 自身回复（识别见 service/admin 的 isBotReply）
 	Render    string // 展示文本（ForLLM 视图：text + 已描述图片「（图片：描述）」+ 占位标记）
 }
+
+// SessionSummary 会话摘要热链的单条展示视图（管理前端「更早的对话纪要」区块）。
+// 摘要文本、关键词与关键决定直接取自 entity.Summary；会话键/序号为链路内部字段，不进展示视图。
+type SessionSummary struct {
+	Text      string   // 摘要文本
+	Keywords  []string // 关键词标签
+	Decisions []string // 关键决定/共识
+	CreatedAt int64    // 生成时间（Unix 秒）
+}
