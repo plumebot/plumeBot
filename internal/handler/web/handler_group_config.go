@@ -15,15 +15,14 @@ import (
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler/web/dto/request"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 )
 
 // GroupConfigHandler 群配置域 handler 集。
 type GroupConfigHandler struct {
-	svc *admin.Service
+	svc domain.Admin
 }
 
-func newGroupConfigHandler(svc *admin.Service) *GroupConfigHandler {
+func newGroupConfigHandler(svc domain.Admin) *GroupConfigHandler {
 	return &GroupConfigHandler{svc: svc}
 }
 
@@ -44,9 +43,22 @@ func (h *GroupConfigHandler) list(c *gin.Context) {
 	}
 	out := make([]response.GroupConfig, 0, len(items))
 	for _, it := range items {
-		out = append(out, response.GroupConfig{GroupConfig: it, Configured: true})
+		out = append(out, toGroupConfigDTO(it, true))
 	}
 	ok(c, response.Items[response.GroupConfig]{Items: out})
+}
+
+// toGroupConfigDTO 把 entity.GroupConfig 映射为出参 dto（json 形态归 dto 层，见 response.GroupConfig）。
+func toGroupConfigDTO(cfg entity.GroupConfig, configured bool) response.GroupConfig {
+	return response.GroupConfig{
+		GroupID: cfg.GroupID, Mode: cfg.Mode,
+		EnergyMax: cfg.EnergyMax, EnergyCost: cfg.EnergyCost, EnergyRecover: cfg.EnergyRecover,
+		EnergyThreshold: cfg.EnergyThreshold, CooldownSeconds: cfg.CooldownSeconds,
+		ConsecutiveLimit: cfg.ConsecutiveLimit, RestSeconds: cfg.RestSeconds,
+		QuietHoursStart: cfg.QuietHoursStart, QuietHoursEnd: cfg.QuietHoursEnd,
+		ShortMessageChars: cfg.ShortMessageChars, GroupMgmtEnabled: cfg.GroupMgmtEnabled,
+		Configured: configured,
+	}
 }
 
 // get 单群配置；无配置行（该群尚未被 bot 触达）返回 200 + 零值 + configured:false（非 404）。
@@ -60,7 +72,7 @@ func (h *GroupConfigHandler) get(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	ok(c, response.GroupConfig{GroupConfig: *cfg, Configured: true})
+	ok(c, toGroupConfigDTO(*cfg, true))
 }
 
 // upsert 整行写单群配置（0/空列 = 走全局）。
@@ -82,7 +94,7 @@ func (h *GroupConfigHandler) upsert(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	ok(c, response.GroupConfig{GroupConfig: *got, Configured: true})
+	ok(c, toGroupConfigDTO(*got, true))
 }
 
 // delete 删除单群配置 → 恢复全局兜底。注意非持久：该群下次被 bot 触达时会重新自动建行（按当时的全局值）。

@@ -8,17 +8,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"plumebot/internal/domain"
 	"plumebot/internal/handler/web/dto/request"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 )
 
 // JargonHandler 黑话域 handler 集。
 type JargonHandler struct {
-	svc *admin.Service
+	svc domain.Admin
 }
 
-func newJargonHandler(svc *admin.Service) *JargonHandler {
+func newJargonHandler(svc domain.Admin) *JargonHandler {
 	return &JargonHandler{svc: svc}
 }
 

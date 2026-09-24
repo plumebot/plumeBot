@@ -53,7 +53,18 @@ func (h *LogHandler) list(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	ok(c, response.LogPage{Items: page.Items, HasMore: page.HasMore})
+	ok(c, response.LogPage{Items: toLogEntryDTOs(page.Items), HasMore: page.HasMore})
+}
+
+// toLogEntryDTOs 把 entity.LogEntry 映射为出参 dto（json 形态归 dto 层，见 response.LogEntry）。
+func toLogEntryDTOs(items []entity.LogEntry) []response.LogEntry {
+	out := make([]response.LogEntry, 0, len(items))
+	for _, it := range items {
+		out = append(out, response.LogEntry{
+			TS: it.TS, Level: it.Level, Message: it.Message, TraceID: it.TraceID, Fields: it.Fields,
+		})
+	}
+	return out
 }
 
 // parseLogQuery 解析并校验查询参数。

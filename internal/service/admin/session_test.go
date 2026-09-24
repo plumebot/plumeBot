@@ -11,8 +11,8 @@ import (
 	"plumebot/internal/domain/entity"
 )
 
-// fakeSessionMem 实现 windowReader（GetWindow/ListSessions），并补 InvalidateGroupProfile
-// 同时满足 groupProfileInvalidator（Service 两个消费面共用注入面）。
+// fakeSessionMem 实现 domain.SessionWindowReader（GetWindow/ListSessions），并补 InvalidateGroupProfile
+// 同时满足 domain.GroupProfileInvalidator（Service 两个消费面共用注入面）。
 type fakeSessionMem struct {
 	sessions map[string][]entity.Message
 }

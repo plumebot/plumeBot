@@ -765,7 +765,8 @@ Ctrl+C 直接终止进程（防卡死）。
 - 返回：`{code:0, data:{items:[{ts,level,message,trace_id,fields}], has_more}}`（items 最新在前）。
 - 参数非法一律 400（不静默忽略，避免前端以为筛选生效却看到全量）。
 - 分层：`domain.LogReader`（接口，domain 层只放接口）← `infra/logfile`（实现）；查询条件与结果类型
-  `entity.LogQuery`/`LogEntry`/`LogPage` 归 entity；`service/log`（logsvc，参数归一）←
+  `entity.LogQuery`/`LogEntry`/`LogPage` 归 entity（**纯结构不带 json tag**，json 出参形态在
+  `handler/web/dto/response.LogEntry`/`LogPage`）；`service/log`（logsvc，参数归一）←
   `handler/web.LogHandler`（独立于 admin.Service）。
 - 全接口限流：`verifyAuth` 之后统一挂 `apiLimiter`（10/s、burst 30），注册/登录沿用更紧的
   `authLimiter`（2/s、burst 10）。

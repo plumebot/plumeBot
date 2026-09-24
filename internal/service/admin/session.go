@@ -8,38 +8,22 @@ import (
 	"context"
 	"strings"
 
+	"plumebot/internal/domain/entity"
 	"plumebot/pkg/logger"
 )
 
-// SessionOverview 单个活跃会话的概览（管理前端会话下拉展示）。
-type SessionOverview struct {
-	Key        string // 会话键：群号 或 "private:"+QQ
-	Count      int    // 窗口内消息条数
-	LastTS     int64  // 窗口内最后一条消息的时间戳（秒）；空窗口为 0
-	LastRender string // 最后一条消息的展示文本（ForLLM：含图片描述）
-}
-
-// SessionMessage 窗口内单条消息的展示视图（前端聊天气泡）。
-type SessionMessage struct {
-	MessageID string // 消息 ID（bot 转发为 "self:" 前缀，见 Self）
-	Sender    string // 发送者展示名（SenderName 优先，空回落 QQ 号）
-	SendAt    int64  // 消息时间戳（秒）
-	Self      bool   // 是否 bot 自身回复（不含 @ 等入站标记；识别见 isBotReply）
-	Render    string // 展示文本（ForLLM 视图：text + 已描述图片「（图片：描述）」+ 未描述/语音等 [占位] 标记）
-}
-
 // ListSessions 返回当前持有活跃窗口的全部会话概览，按会话键升序（窗口实现已排序，稳定输出）。
 // 单个会话读取失败仅跳过（窗口为内存运行态，不因个别会话失败阻断整体列表）。
-func (s *Service) ListSessions(ctx context.Context) []SessionOverview {
+func (s *Service) ListSessions(ctx context.Context) []entity.SessionOverview {
 	keys := s.win.ListSessions()
-	out := make([]SessionOverview, 0, len(keys))
+	out := make([]entity.SessionOverview, 0, len(keys))
 	for _, key := range keys {
 		msgs, err := s.win.GetWindow(ctx, key)
 		if err != nil {
 			logger.From(ctx).Warn("会话概览读取失败", logger.S("session", key), logger.Err(err))
 			continue
 		}
-		ov := SessionOverview{Key: key, Count: len(msgs)}
+		ov := entity.SessionOverview{Key: key, Count: len(msgs)}
 		if n := len(msgs); n > 0 {
 			ov.LastTS = msgs[n-1].Timestamp
 			ov.LastRender = msgs[n-1].ForLLM()
@@ -51,19 +35,19 @@ func (s *Service) ListSessions(ctx context.Context) []SessionOverview {
 
 // GetSessionWindow 返回会话窗口内消息的只读视图（时间正序）。
 // 会话不存在/窗口为空返回空切片（非错误），前端据此渲染空态提示。
-func (s *Service) GetSessionWindow(ctx context.Context, sessionKey string) []SessionMessage {
+func (s *Service) GetSessionWindow(ctx context.Context, sessionKey string) []entity.SessionMessage {
 	msgs, err := s.win.GetWindow(ctx, sessionKey)
 	if err != nil {
 		logger.From(ctx).Warn("会话窗口读取失败", logger.S("session", sessionKey), logger.Err(err))
-		return []SessionMessage{}
+		return []entity.SessionMessage{}
 	}
-	out := make([]SessionMessage, 0, len(msgs))
+	out := make([]entity.SessionMessage, 0, len(msgs))
 	for _, m := range msgs {
 		sender := m.SenderName
 		if sender == "" {
 			sender = m.UserID
 		}
-		out = append(out, SessionMessage{
+		out = append(out, entity.SessionMessage{
 			MessageID: m.MessageID,
 			Sender:    sender,
 			SendAt:    m.Timestamp,

@@ -10,21 +10,8 @@ import (
 	"plumebot/pkg/logger"
 )
 
-// groupProfileInvalidator 是 Service 对「群画像缓存失效」的最小依赖面（消费者侧接口）。
-// *memory.MemoryService 实现了该接口；测试可注入假实现断言失效被触发。
-type groupProfileInvalidator interface {
-	InvalidateGroupProfile(groupID string)
-}
-
-// windowReader 是 Service 对「内存上下文窗口只读」的最小依赖面（消费者侧接口，P7-003）。
-// *memory.MemoryService 实现了该接口；测试可注入假实现。
-type windowReader interface {
-	// GetWindow 返回会话窗口内消息（会话键：群聊=GroupID，私聊="private:"+UserID）；
-	// 会话不存在返回空切片（非错误）。
-	GetWindow(ctx context.Context, sessionID string) ([]entity.Message, error)
-	// ListSessions 返回当前持有活跃窗口的全部会话键。
-	ListSessions() []string
-}
+// 消费侧接口（SessionWindowReader / GroupProfileInvalidator）定义在 domain 层
+//（internal/domain/admin.go），与 domain.Admin 接口保持一致的分层纪律。
 
 // clientIPCtxKey 是来源 IP 在 context 中的键类型（私有，避免与其他包键冲突）。
 type clientIPCtxKey struct{}
@@ -41,13 +28,13 @@ func ClientIPFrom(ctx context.Context) string {
 	return ip
 }
 
-// Service 管理后端配置读写（P7-001，单 service 按配置域分组方法，见 docs/admin-web-api-plan.md §4.3）。
+// Service 实现 domain.Admin 管理后端配置读写（P7-001，单 service 按配置域分组方法，见 docs/admin-web-api-plan.md §4.3）。
 // 依赖注入：domain.Storage（配置读写）+ 群画像缓存失效器（*memory.MemoryService）+
 // 窗口只读（*memory.MemoryService）+ *jwt.Manager（签发）。
 type Service struct {
 	store domain.Storage
-	mem   groupProfileInvalidator
-	win   windowReader
+	mem   domain.GroupProfileInvalidator
+	win   domain.SessionWindowReader
 	mgr   *jwt.Manager
 }
 
@@ -68,19 +55,11 @@ func (s *Service) audit(ctx context.Context, by, resource, target string) {
 		logger.S("ip", ClientIPFrom(ctx)))
 }
 
-// AuthResult 注册/登录成功返回的认证结果（token 由 mgr 签发）。
-type AuthResult struct {
-	Token     string
-	TokenType string
-	Username  string
-	ExpiresAt int64
-}
-
-// issueToken 为 username 签发登录 token。
-func (s *Service) issueToken(username string) (*AuthResult, error) {
+// issueToken 为 username 签发登录 token（AuthResult 结构定义见 domain/entity，json 由 web dto 接管）。
+func (s *Service) issueToken(username string) (*entity.AuthResult, error) {
 	tok, expiresAt, err := s.mgr.Sign(username)
 	if err != nil {
 		return nil, err
 	}
-	return &AuthResult{Token: tok, TokenType: "Bearer", Username: username, ExpiresAt: expiresAt}, nil
+	return &entity.AuthResult{Token: tok, TokenType: "Bearer", Username: username, ExpiresAt: expiresAt}, nil
 }

@@ -12,15 +12,14 @@ import (
 
 	"plumebot/internal/domain"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 )
 
 // StateHandler 运行态域 handler 集。
 type StateHandler struct {
-	svc *admin.Service
+	svc domain.Admin
 }
 
-func newStateHandler(svc *admin.Service) *StateHandler {
+func newStateHandler(svc domain.Admin) *StateHandler {
 	return &StateHandler{svc: svc}
 }
 

@@ -7,17 +7,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"plumebot/internal/domain"
 	"plumebot/internal/handler/web/dto/request"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 )
 
 // MemberFactHandler 成员事实域 handler 集。
 type MemberFactHandler struct {
-	svc *admin.Service
+	svc domain.Admin
 }
 
-func newMemberFactHandler(svc *admin.Service) *MemberFactHandler {
+func newMemberFactHandler(svc domain.Admin) *MemberFactHandler {
 	return &MemberFactHandler{svc: svc}
 }
 

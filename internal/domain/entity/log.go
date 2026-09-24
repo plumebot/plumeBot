@@ -26,16 +26,18 @@ type LogQuery struct {
 // LogEntry 是一条已解析的日志记录（zap JSON 行 → 结构化）。
 // Fields 保留去除 ts/level/msg/trace_id 后的其余字段（caller/stacktrace/业务 KV），
 // 供前端展开查看；值可能为任意 JSON 类型。
+// 纯结构（无 json tag）——前端出参的 json 形态定义在 handler/web/dto/response（LogEntry）。
 type LogEntry struct {
-	TS      time.Time      `json:"ts"`
-	Level   string         `json:"level"`
-	Message string         `json:"message"`
-	TraceID string         `json:"trace_id,omitempty"`
-	Fields  map[string]any `json:"fields,omitempty"`
+	TS      time.Time
+	Level   string
+	Message string
+	TraceID string
+	Fields  map[string]any
 }
 
 // LogPage 是一页日志查询结果：HasMore 表示本次未读完（还有更早的记录）。
+// 纯结构（无 json tag）——json 形态见 handler/web/dto/response.LogPage。
 type LogPage struct {
-	Items   []LogEntry `json:"items"`
-	HasMore bool       `json:"has_more"`
+	Items   []LogEntry
+	HasMore bool
 }

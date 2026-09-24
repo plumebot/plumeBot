@@ -6,16 +6,16 @@ package web
 import (
 	"github.com/gin-gonic/gin"
 
+	"plumebot/internal/domain"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 )
 
 // SessionHandler 会话窗口域 handler 集。
 type SessionHandler struct {
-	svc *admin.Service
+	svc domain.Admin
 }
 
-func newSessionHandler(svc *admin.Service) *SessionHandler {
+func newSessionHandler(svc domain.Admin) *SessionHandler {
 	return &SessionHandler{svc: svc}
 }
 

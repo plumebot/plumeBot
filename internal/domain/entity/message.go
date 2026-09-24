@@ -1,5 +1,7 @@
 // Package entity 定义领域层公共实体，所有结构体均为纯数据结构，
 // 不包含任何业务逻辑或外部依赖；仅允许只读的结构校验/派生视图函数（见 plugin_validate.go、message.go）。
+// json tag 仅出现于 ContentPart（持久化形态约定，见 content.go）；其余实体不带 tag——
+// 前端入参/出参的 json 形态统一定义在 handler/web/dto（request/response）。
 package entity
 
 import "strings"

@@ -94,13 +94,18 @@ cmd/bot/main.go
   │             组装注入 + port 探测递增
   ▼
 internal/handler/web/        (新增) gin 路由注册 + auth 中间件 + 前端静态页服务
-  │   NewRouter(admin *admin.Service, staticFS) *gin.Engine
+  │   NewRouter(svc domain.Admin, logSvc, mgr) *gin.Engine   // 依赖接口，不依赖具体实现
   │   authMiddleware(manager *jwt.Manager)
   ├── static/index.html     (新增) 简易前端单页（go:embed，无构建链）
   ▼
+internal/domain/admin.go     (新增) Admin 接口（方法签名以 entity 承载）+ 消费侧
+  │                          SessionWindowReader / GroupProfileInvalidator 接口
+  ▼
 internal/service/admin/      (新增) 配置管理业务：校验 + 读写 + 缓存失效 + 审计 + 注册/登录/改密
-  │   Service{ store domain.Storage, mem *memory.MemoryService, jwt *jwt.Manager, auth ... }
-  │   （按配置域分组方法：Group/Persona/Profile/Jargon/MemberFact/State/Auth）
+  │   Service{ store domain.Storage, mem domain.GroupProfileInvalidator,
+  │            win domain.SessionWindowReader, mgr *jwt.Manager }   // 实现 domain.Admin
+  │   （按配置域分组方法：Group/Persona/Profile/Jargon/MemberFact/State/Auth；接口签名中的
+  │    通信结构体 AuthResult/SessionOverview/SessionMessage 定义在 domain/entity，json 由 web dto 接管）
   ▼
 internal/domain/             (扩展) Storage 接口加方法 + 新增 entity.Jargon / entity.AdminUser
 internal/infra/sqlite/       (扩展) 实现新方法 + 003_admin_user.sql 迁移（queries.go 加 const SQL）
@@ -114,11 +119,13 @@ web 前端                     handler/web/static（embedded，无额外依赖�
 ### 4.2 依赖方向（遵守 CLAUDE.md §5.5）
 
 ```
-cmd → handler/web → service/admin → domain(Storage/entity)
+cmd → handler/web ──(domain.Admin 接口)──→ service/admin → domain(Storage/entity)
                         │
                         └→ service/memory（仅用于 group_profile 缓存失效；service→service 依赖有先例：event→memory）
                         └→ pkg/jwt（登录签发/中间件验签）
 ```
+
+- handler/web 依赖 `domain.Admin` 接口（不依赖 `*admin.Service` 具体类型）；消费侧接口 `domain.SessionWindowReader`/`domain.GroupProfileInvalidator` 定义在 domain，`*memory.MemoryService` 实现。
 
 - `service/admin` 依赖 **`domain.Storage` 接口 + `*memory.MemoryService` + `*jwt.Manager`**，不 import infra；
 - SQL 语句全部留在 `infra/sqlite/queries.go` 包级 const（规则 10），admin 不写 SQL；

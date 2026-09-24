@@ -18,7 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"plumebot/internal/service/admin"
+	"plumebot/internal/domain"
 	logsvc "plumebot/internal/service/log"
 	"plumebot/pkg/jwt"
 )
@@ -35,7 +35,7 @@ var staticFS embed.FS
 //     日志浏览域依赖 service/log（logSvc），与配置管理链路分离。
 //
 // admin.enabled=false 时 main 侧不调用本函数（回退仅 /ping 的 newWebServer）。
-func NewRouter(svc *admin.Service, logSvc *logsvc.Service, mgr *jwt.Manager) *gin.Engine {
+func NewRouter(svc domain.Admin, logSvc *logsvc.Service, mgr *jwt.Manager) *gin.Engine {
 	r := gin.New()
 	r.Use(Recovery())
 	r.Use(AccessLogger())

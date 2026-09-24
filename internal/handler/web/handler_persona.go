@@ -8,18 +8,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler/web/dto/request"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 )
 
 // PersonaHandler 人格域 handler 集。
 type PersonaHandler struct {
-	svc *admin.Service
+	svc domain.Admin
 }
 
-func newPersonaHandler(svc *admin.Service) *PersonaHandler {
+func newPersonaHandler(svc domain.Admin) *PersonaHandler {
 	return &PersonaHandler{svc: svc}
 }
 

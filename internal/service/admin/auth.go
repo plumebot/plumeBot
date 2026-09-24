@@ -14,7 +14,7 @@ import (
 
 // Register 创建首个管理员账号（空表门控，定案 J）并签发 token。
 // 已有任一管理员 → ErrAlreadyRegistered；同名冲突由 UNIQUE 兜底 → ErrConflict。
-func (s *Service) Register(ctx context.Context, username, password string) (*AuthResult, error) {
+func (s *Service) Register(ctx context.Context, username, password string) (*entity.AuthResult, error) {
 	if err := validateAuthInput(username, password); err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (s *Service) Register(ctx context.Context, username, password string) (*Aut
 
 // Login 校验用户名/密码，成功签发 token。
 // 失败统一收敛为 ErrInvalidCredentials（不区分「用户不存在/密码错误」，防探测）。
-func (s *Service) Login(ctx context.Context, username, password string) (*AuthResult, error) {
+func (s *Service) Login(ctx context.Context, username, password string) (*entity.AuthResult, error) {
 	u, err := s.store.GetAdminUserByName(ctx, username)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {

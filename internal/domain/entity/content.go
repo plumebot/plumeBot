@@ -26,6 +26,10 @@ const (
 // URL 与 Base64 二选一（按 Type 决定语义）；MIMEType 用于图片等二进制片段（如 image/png）。
 // Description 是多模态片段的 LLM 文本描述：空 = 未生成（阶段 2 惰性填充）。
 // 持久化规则：base64 不落库，仅 URL / 文本 / 描述落库。
+//
+// 本结构是 entity 中唯一带 json tag 的类型：**tag 是其持久化形态约定**——
+// messages.parts 列为 JSON 文本，由 infra/sqlite 直接 json.Marshal/Unmarshal（键名即列内键名，
+// 改名必须是有意为之，避免旧行读不出）。web 出参不经本类型，json 序列化仍由 dto 层负责。
 type ContentPart struct {
 	Type        PartType `json:"type"`
 	Text        string   `json:"text,omitempty"`        // Type==text 时的文本；Type==at 时为 "[@qq]"/"[@全体]"
@@ -36,7 +40,8 @@ type ContentPart struct {
 	// FileHash 图片内容寻址键（一图一值）：OneBot image 段 file/file_md5 的 32 位 hex
 	//（NapCat 收图 file 即内容 md5，可能带 .image 后缀），或 base64:// 解码字节 md5。
 	// 跨 URL/跨来源共享；空 = 来源不可得（回落 URL 字符串键）。
-	FileHash string `json:"file_hash,omitempty"`
+	// 不带 omitempty：持久化键显式出现（键稳定，便于排查），与其他文本字段的体积优化语义区分。
+	FileHash string `json:"file_hash"`
 }
 
 // ChatMessage 是传给 LLM 的一条会话消息（多模态：Parts 可含文本、图片等片段）。

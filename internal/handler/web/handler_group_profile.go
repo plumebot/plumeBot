@@ -13,15 +13,14 @@ import (
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler/web/dto/request"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 )
 
 // GroupProfileHandler 群画像域 handler 集。
 type GroupProfileHandler struct {
-	svc *admin.Service
+	svc domain.Admin
 }
 
-func newGroupProfileHandler(svc *admin.Service) *GroupProfileHandler {
+func newGroupProfileHandler(svc domain.Admin) *GroupProfileHandler {
 	return &GroupProfileHandler{svc: svc}
 }
 

@@ -2,7 +2,7 @@ package web
 
 // AuthHandler 认证域 handler（P7-001）：注册 / 登录 / 改密 / 当前用户 / 注册状态。
 // 按职责域拆分 handler 对象——认证路由与配置域路由（handler_resource.go）互不耦合；
-// 每个 handler 只持本域所需依赖（admin.Service + 认证限流器），请求/响应结构来自
+// 每个 handler 只持本域所需依赖（domain.Admin + 认证限流器），请求/响应结构来自
 // dto/request 与 dto/response，本文件不内联定义。
 
 import (
@@ -10,20 +10,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"plumebot/internal/domain"
 	"plumebot/internal/handler/web/dto/request"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 	"plumebot/pkg/jwt"
 )
 
 // AuthHandler 认证域 handler 集。
 type AuthHandler struct {
-	svc     *admin.Service
+	svc     domain.Admin
 	limiter *ipLimiter // 注册/登录每 IP 限流（防爆破）
 }
 
 // newAuthHandler 创建认证域 handler。
-func newAuthHandler(svc *admin.Service) *AuthHandler {
+func newAuthHandler(svc domain.Admin) *AuthHandler {
 	return &AuthHandler{svc: svc, limiter: newIPLimiter(authRateLimit, authBurst)}
 }
 
