@@ -2,14 +2,19 @@ package ai
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"plumebot/internal/domain/entity"
@@ -72,12 +77,48 @@ func TestEinoMediaDescriberDescribeLocalFile(t *testing.T) {
 	runDescribeAndAssert(t, entity.ContentPart{Type: entity.PartTypeImage, URL: path})
 }
 
-func TestEinoMediaDescriberDescribeHTTP(t *testing.T) {
+// TestEinoMediaDescriberDescribeHTTPURLDirect 远程 URL 直传（B-027 增强）：describer 不本地拉图，
+// 直接把 URL 交给视觉模型（provider 侧拉图），server 应零请求。
+func TestEinoMediaDescriberDescribeHTTPURLDirect(t *testing.T) {
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
 		_, _ = w.Write(mustDecodePNG(t))
 	}))
 	defer srv.Close()
-	runDescribeAndAssert(t, entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL})
+
+	fake := &fakeChatModel{script: []*schema.Message{
+		schema.AssistantMessage("一只猫。", nil),
+	}}
+	d := &EinoMediaDescriber{cm: fake, http: &http.Client{}}
+
+	got, err := d.Describe(context.Background(), entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL})
+	if err != nil {
+		t.Fatalf("Describe 失败: %v", err)
+	}
+	if got != "一只猫。" {
+		t.Errorf("描述文本 = %q，期望模型返回", got)
+	}
+	if hits.Load() != 0 {
+		t.Errorf("URL 直传不应本地拉图, 实际 server 请求 %d", hits.Load())
+	}
+	if len(fake.inputs) != 1 {
+		t.Fatalf("应只调模型 1 次, 实际 %d", len(fake.inputs))
+	}
+	in := fake.inputs[0]
+	if len(in) != 2 || in[0].Role != schema.System || in[1].Role != schema.User {
+		t.Fatalf("模型应收到 system+user 两条消息, 实际 %+v", in)
+	}
+	parts := in[1].UserInputMultiContent
+	if len(parts) != 2 || parts[0].Type != schema.ChatMessagePartTypeText || parts[1].Image == nil {
+		t.Fatalf("user 多模态 part 不符: %+v", parts)
+	}
+	if parts[1].Image.URL == nil || *parts[1].Image.URL != srv.URL {
+		t.Errorf("URL 直传应透传 Image.URL, 实际 %+v", parts[1].Image)
+	}
+	if parts[1].Image.Base64Data != nil {
+		t.Errorf("URL 直传不应带 Base64Data, 实际 %+v", parts[1].Image)
+	}
 }
 
 func TestEinoMediaDescriberDescribeBase64Direct(t *testing.T) {
@@ -170,16 +211,117 @@ func TestEinoMediaDescriberCacheKeyIsolation(t *testing.T) {
 	}
 }
 
-// TestImageContentKey 校验内容键规则：Base64 按 md5 内容寻址，URL 按串。
+// TestImageContentKey 校验内容键规则（B-027 增强）：FileHash 优先（跨 URL 内容寻址）、
+// Base64 按解码字节 md5、URL 按串兜底；无可描述来源（URL/Base64 皆空）返回空键
+// （防失败冷却污染：仅 FileHash 的占位段不生成键）。
 func TestImageContentKey(t *testing.T) {
-	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage, Base64: testPNGBase64}); got == "" || got[:4] != "b64:" {
-		t.Errorf("Base64 键应带 b64: 前缀, 实际 %q", got)
+	sum := md5.Sum(mustDecodePNG(t))
+	h := hex.EncodeToString(sum[:])
+	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage, Base64: testPNGBase64}); got != "md5:"+h {
+		t.Errorf("Base64 键应为解码字节 md5, 实际 %q", got)
 	}
 	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage, URL: "u"}); got != "url:u" {
 		t.Errorf("URL 键应按串, 实际 %q", got)
 	}
+	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage, URL: "https://a/1.png", FileHash: "abc123"}); got != "md5:abc123" {
+		t.Errorf("FileHash 应优先于 URL, 实际 %q", got)
+	}
+	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage, FileHash: "abc123"}); got != "" {
+		t.Errorf("仅 FileHash 无来源应返回空键, 实际 %q", got)
+	}
 	if got := imageContentKey(entity.ContentPart{Type: entity.PartTypeImage}); got != "" {
 		t.Errorf("URL/Base64 皆空应返回空键, 实际 %q", got)
+	}
+}
+
+// TestEinoMediaDescriberFileHashShareAcrossURL 同内容不同 URL + 相同 FileHash → 第二次 Describe
+// 命中缓存（B-027 增强·问题1核心）：不再因 URL 串变化重复拉取/调模型（全程无网络，URL 直传）。
+func TestEinoMediaDescriberFileHashShareAcrossURL(t *testing.T) {
+	sum := md5.Sum(mustDecodePNG(t))
+	h := hex.EncodeToString(sum[:])
+	fake := &fakeChatModel{script: []*schema.Message{
+		schema.AssistantMessage("一只猫。", nil),
+	}}
+	d := &EinoMediaDescriber{cm: fake, http: &http.Client{}}
+
+	p1 := entity.ContentPart{Type: entity.PartTypeImage, URL: "https://cdn1.example.com/a.png", FileHash: h}
+	p2 := entity.ContentPart{Type: entity.PartTypeImage, URL: "https://cdn2.example.com/a.png?term=1&w=100", FileHash: h}
+
+	first, err := d.Describe(context.Background(), p1)
+	if err != nil {
+		t.Fatalf("首次 Describe 失败: %v", err)
+	}
+	second, err := d.Describe(context.Background(), p2)
+	if err != nil {
+		t.Fatalf("二次 Describe 失败: %v", err)
+	}
+	if first != second {
+		t.Errorf("同内容应命中缓存返回一致描述: %q vs %q", first, second)
+	}
+	if len(fake.inputs) != 1 {
+		t.Errorf("同内容不同 URL 应只调模型 1 次, 实际 %d", len(fake.inputs))
+	}
+	// 唯一一次调用的输入应为 URL 直传（各自的 URL）。
+	in := fake.inputs[0]
+	parts := in[1].UserInputMultiContent
+	if parts[1].Image.URL == nil || *parts[1].Image.URL != p1.URL {
+		t.Errorf("首调应直传 p1 URL, 实际 %+v", parts[1].Image)
+	}
+}
+
+// flakyFirstModel 首次 Generate 报错、二次返回成功的脚本化 ChatModel，用于 URL 直传失败回退测试。
+type flakyFirstModel struct {
+	calls int
+	user  *schema.Message // 最近一次调用的输入（断言回退是否走 base64）
+}
+
+var _ model.BaseChatModel = (*flakyFirstModel)(nil)
+
+func (m *flakyFirstModel) Generate(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	m.calls++
+	m.user = input[len(input)-1]
+	if m.calls == 1 {
+		return nil, errors.New("provider 无法访问远程图片 URL（模拟）")
+	}
+	return schema.AssistantMessage("一只猫。", nil), nil
+}
+
+func (m *flakyFirstModel) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return nil, errors.New("flakyFirstModel: Stream 未实现")
+}
+
+// TestEinoMediaDescriberURLDirectFallback URL 直传失败 → 回退本地拉取→base64 重试一次。
+// server 应恰好被拉 1 次；第二次调用的 user part 为 base64 透传（内容 = server 返回的 PNG）。
+func TestEinoMediaDescriberURLDirectFallback(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write(mustDecodePNG(t))
+	}))
+	defer srv.Close()
+
+	fm := &flakyFirstModel{}
+	d := &EinoMediaDescriber{cm: fm, http: &http.Client{}}
+
+	got, err := d.Describe(context.Background(), entity.ContentPart{Type: entity.PartTypeImage, URL: srv.URL})
+	if err != nil {
+		t.Fatalf("回退后 Describe 应成功: %v", err)
+	}
+	if got != "一只猫。" {
+		t.Errorf("描述文本 = %q，期望回退成功返回", got)
+	}
+	if hits.Load() != 1 {
+		t.Errorf("回退应本地拉图恰好 1 次, 实际 %d", hits.Load())
+	}
+	if fm.calls != 2 {
+		t.Errorf("应模型调用 2 次（直传失败 + 回退）, 实际 %d", fm.calls)
+	}
+	parts := fm.user.UserInputMultiContent
+	if parts[1].Image.Base64Data == nil || *parts[1].Image.Base64Data != testPNGBase64 {
+		t.Errorf("回退应透传 base64, 实际 %+v", parts[1].Image)
+	}
+	if parts[1].Image.MIMEType != "image/png" {
+		t.Errorf("回退 mime 应为 image/png, 实际 %q", parts[1].Image.MIMEType)
 	}
 }
 

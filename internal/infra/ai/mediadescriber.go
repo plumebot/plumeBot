@@ -50,11 +50,12 @@ const (
 
 // EinoMediaDescriber 是基于原始 ChatModel 的 domain.MediaDescriber 实现。
 // 与 EinoAgent 刻意分离：无人设 Instruction、无工具、无 ReAct 循环，
-// 是「取图 → base64 → 视觉模型单次调用 → 文本描述」的裸调用（图片描述专用）。
-// 拉图来源判定：part.Base64 直传 → 解码；URL 为 http(s):// → HTTP GET；
-// 其余（本地路径，base64 入链闭合产物）→ os.ReadFile。
+// 是「取图（远程 URL 直传 provider / 本地取字节）→ 视觉模型单次调用 → 文本描述」的裸调用。
+// 拉图来源判定：URL 为 http(s):// → 直传 URL（provider 侧拉图），失败本地 GET 回退；
+// part.Base64 直传 → 解码；其余（本地路径，base64 入链闭合产物）→ os.ReadFile。
 // P6-001 B-027：按内容哈希缓存成功描述（contentHash→desc，并发安全），重复图片不再调用模型；
 // 失败按 contentHash 记冷却（BUG-3），冷却期内直接失败，防重试风暴。
+// B-027 增强：内容键优先 FileHash（一图一值，同图多 URL 命中缓存），URL 直传免本地下载。
 // model 为视觉模型名（调用度量日志用，NewMediaDescriber 从 vision_entry 取）。
 type EinoMediaDescriber struct {
 	cm    model.BaseChatModel
@@ -85,8 +86,10 @@ func NewMediaDescriber(ctx context.Context, cfg config.Config) (domain.MediaDesc
 	}, nil
 }
 
-// Describe 生成图片的文本描述：加载图片字节 → base64 → 复用 ToSchema 构造
-// user 多模态消息（text + image，与 spike 冒烟同形状）→ 前置 system → 视觉模型单次调用。
+// Describe 生成图片的文本描述。远程 http(s) URL → 直传 URL 给视觉模型（provider 侧拉图，
+// 不本地下载，B-027 增强）；直传失败（过期签名 URL / provider 不可达 qpic / 不支持远程图）→
+// 本地拉取 → base64 回退重试一次。本地路径/base64 → 取字节 → base64 透传。均复用 ToSchema
+// 构造 user 多模态消息（text + image）→ 前置 system → 视觉模型单次调用。
 // 命中成功缓存（B-027）直接返回；命中失败冷却（BUG-3）直接返回失败，均不触达模型。
 // 日志：缓存命中/冷却命中 Debug、视觉调用记模型调用度量 Info（架构 §17.2 infra/ai）—
 // 排障「图片一直是 [图片]」有依据（缓存失效、合并接口不可达、视觉调用失败一目了然）。
@@ -110,28 +113,28 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 	}
 
 	start := time.Now()
-	data, mime, err := loadImageBytes(ctx, d.http, part)
+	msgs, err := buildDescribeUser(ctx, d.http, part)
 	if err != nil {
 		d.markFail(key)
-		l.Warn("图片描述拉取失败",
+		l.Warn("图片描述加载失败",
 			logger.S("key", key), logger.I64("latency_ms", time.Since(start).Milliseconds()), logger.Err(err))
 		return "", fmt.Errorf("加载图片失败: %w", err)
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(data)
-	msgs, err := ToSchema([]entity.ChatMessage{{
-		Role: entity.RoleUser,
-		Parts: []entity.ContentPart{
-			{Type: entity.PartTypeText, Text: userDescribePrompt},
-			{Type: entity.PartTypeImage, Base64: b64, MIMEType: mime},
-		},
-	}})
-	if err != nil {
-		return "", err
+	out, err := d.cm.Generate(ctx, describeInput(msgs))
+	if err != nil && isRemoteURL(part) {
+		// URL 直传失败（过期签名 URL / 海外 API 无法访问 qpic / 自建服务不支持远程图）：
+		// 本地拉取 → base64 回退重试一次；仅远程 URL 生效，本地/Base64 不进此分支。
+		if data, mime, ferr := loadImageBytes(ctx, d.http, part); ferr == nil {
+			var fb []*schema.Message
+			if fb, err = buildDescribeUserBase64(data, mime); err == nil {
+				out, err = d.cm.Generate(ctx, describeInput(fb))
+			}
+		} else {
+			err = ferr // 回退拉图失败：换回退的拉取错误（比原始模型错误更可诊断）
+		}
 	}
-	input := append([]*schema.Message{schema.SystemMessage(systemDescribePrompt)}, msgs...)
 
-	out, err := d.cm.Generate(ctx, input)
 	fields := []zap.Field{
 		logger.S("model", d.model),
 		logger.I64("latency_ms", time.Since(start).Milliseconds()),
@@ -165,6 +168,52 @@ func (d *EinoMediaDescriber) Describe(ctx context.Context, part entity.ContentPa
 	return out.Content, nil
 }
 
+// ---------------------------------------------------------------------------
+// 图片描述输入构造（B-027 增强：URL 直传 + 本地回退）
+// ---------------------------------------------------------------------------
+
+// isRemoteURL 判断 part 是否为 http(s) 远程 URL。与 loadImageBytes 的拉取判定保持一致。
+func isRemoteURL(p entity.ContentPart) bool {
+	return strings.HasPrefix(p.URL, "http://") || strings.HasPrefix(p.URL, "https://")
+}
+
+// buildDescribeUser 构造图片描述 user 多模态消息（text+image）。
+// 远程 URL → 直传 URL part（provider 侧拉图，不本地下载）；本地路径/base64 →
+// loadImageBytes 取字节 → base64 透传（MIME 由 DetectContentType 兜底）。
+func buildDescribeUser(ctx context.Context, client *http.Client, part entity.ContentPart) ([]*schema.Message, error) {
+	if isRemoteURL(part) {
+		return ToSchema([]entity.ChatMessage{{
+			Role: entity.RoleUser,
+			Parts: []entity.ContentPart{
+				{Type: entity.PartTypeText, Text: userDescribePrompt},
+				{Type: entity.PartTypeImage, URL: part.URL},
+			},
+		}})
+	}
+	data, mime, err := loadImageBytes(ctx, client, part)
+	if err != nil {
+		return nil, err
+	}
+	return buildDescribeUserBase64(data, mime)
+}
+
+// buildDescribeUserBase64 构造 text+image(base64) 的 user 消息（本地路径首走与 URL 回退共用）。
+func buildDescribeUserBase64(data []byte, mime string) ([]*schema.Message, error) {
+	b64 := base64.StdEncoding.EncodeToString(data)
+	return ToSchema([]entity.ChatMessage{{
+		Role: entity.RoleUser,
+		Parts: []entity.ContentPart{
+			{Type: entity.PartTypeText, Text: userDescribePrompt},
+			{Type: entity.PartTypeImage, Base64: b64, MIMEType: mime},
+		},
+	}})
+}
+
+// describeInput 前置 system（视觉模型要求 user 多模态消息；system 保持单文本 part）。
+func describeInput(user []*schema.Message) []*schema.Message {
+	return append([]*schema.Message{schema.SystemMessage(systemDescribePrompt)}, user...)
+}
+
 // markFail 记录描述失败冷却（BUG-3）：失败 contentKey 在 descRetryAfter 内直接失败，防重试风暴。
 // 懒初始化：直接构造的实例（测试）cache/fails 可能为 nil。
 func (d *EinoMediaDescriber) markFail(key string) {
@@ -182,13 +231,20 @@ func (d *EinoMediaDescriber) markFail(key string) {
 	d.fails[key] = time.Now().Add(descRetryAfter)
 }
 
-// imageContentKey 图片内容哈希键（B-027）：Base64 按内容 md5（内容寻址）；
-// URL/本地缓存路径按 URL 串（data/image_cache/<md5> 路径本身已是内容寻址）；
-// 两者皆空 → ""（不缓存）。
+// imageContentKey 图片内容哈希键（B-027 增强）：优先级 FileHash（convert 层从 OneBot
+// file/file_md5 提取或 base64 字节推导，一图一值跨 URL 共享）→ Base64（按解码后字节 md5，
+// 内容寻址）→ URL 字符串兜底。FileHash 仅当存在可描述来源（URL/Base64 非空）时生效——
+// 避免「仅 FileHash 无来源」的占位段记入失败冷却，把同内容另有 URL 的来源一并冷却 60s。
 func imageContentKey(p entity.ContentPart) string {
+	if p.FileHash != "" && (p.URL != "" || p.Base64 != "") {
+		return "md5:" + p.FileHash
+	}
 	if p.Base64 != "" {
-		sum := md5.Sum([]byte(p.Base64))
-		return "b64:" + hex.EncodeToString(sum[:])
+		if data, err := base64util.Decode(p.Base64); err == nil {
+			sum := md5.Sum(data)
+			return "md5:" + hex.EncodeToString(sum[:])
+		}
+		// 解码失败 → 落下方 URL 兜底（无则空键不缓存）。
 	}
 	if p.URL != "" {
 		return "url:" + p.URL

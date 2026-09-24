@@ -33,6 +33,10 @@ type ContentPart struct {
 	Base64      string   `json:"base64,omitempty"`      // 二进制内容（base64 编码）；瞬时传递，不持久化
 	MIMEType    string   `json:"mime_type,omitempty"`   // 二进制片段媒体类型（如 image/png）
 	Description string   `json:"description,omitempty"` // 多模态的 LLM 文本描述；空 = 未生成
+	// FileHash 图片内容寻址键（一图一值）：OneBot image 段 file/file_md5 的 32 位 hex
+	//（NapCat 收图 file 即内容 md5，可能带 .image 后缀），或 base64:// 解码字节 md5。
+	// 跨 URL/跨来源共享；空 = 来源不可得（回落 URL 字符串键）。
+	FileHash string `json:"file_hash,omitempty"`
 }
 
 // ChatMessage 是传给 LLM 的一条会话消息（多模态：Parts 可含文本、图片等片段）。

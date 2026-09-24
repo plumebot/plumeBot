@@ -221,7 +221,8 @@ func TestToParts(t *testing.T) {
 			name:  "图片仅base64且无缓存时留空占位",
 			in:    message.Message{message.Image("base64://aGVsbG8=")},
 			cache: nil,
-			want:  []entity.ContentPart{{Type: entity.PartTypeImage, URL: ""}},
+			// base64 解码字节（"hello"）的 md5 入 FileHash；URL 留空占位（可描述性由 FileHash 承载）。
+			want: []entity.ContentPart{{Type: entity.PartTypeImage, URL: "", FileHash: "5d41402abc4b2a76b9719d911017c592"}},
 		},
 		{
 			name: "回复/表情段兜底转文本",
@@ -235,6 +236,26 @@ func TestToParts(t *testing.T) {
 				{Type: entity.PartTypeText, Text: "未知内容"}, // reply 段走 default 兜底
 				{Type: entity.PartTypeText, Text: "178"},  // face 段转表情 id 文本
 			},
+		},
+		{
+			name: "图片file为md5且url空",
+			in:   message.Message{message.Segment{Type: "image", Data: map[string]string{"file": "5d41402abc4b2a76b9719d911017c592"}}},
+			want: []entity.ContentPart{{Type: entity.PartTypeImage, URL: "", FileHash: "5d41402abc4b2a76b9719d911017c592"}},
+		},
+		{
+			name: "图片file带.image后缀",
+			in:   message.Message{message.Segment{Type: "image", Data: map[string]string{"url": "https://cdn/1.png", "file": "5d41402abc4b2a76b9719d911017c592.image"}}},
+			want: []entity.ContentPart{{Type: entity.PartTypeImage, URL: "https://cdn/1.png", FileHash: "5d41402abc4b2a76b9719d911017c592"}},
+		},
+		{
+			name: "图片file垃圾值",
+			in:   message.Message{message.Segment{Type: "image", Data: map[string]string{"url": "https://cdn/1.png", "file": "some-random-name"}}},
+			want: []entity.ContentPart{{Type: entity.PartTypeImage, URL: "https://cdn/1.png"}},
+		},
+		{
+			name: "图片file非md5但file_md5为hex",
+			in:   message.Message{message.Segment{Type: "image", Data: map[string]string{"url": "https://cdn/1.png", "file": "not-hex", "file_md5": "5d41402abc4b2a76b9719d911017c592"}}},
+			want: []entity.ContentPart{{Type: entity.PartTypeImage, URL: "https://cdn/1.png", FileHash: "5d41402abc4b2a76b9719d911017c592"}},
 		},
 	}
 	for _, tc := range cases {
@@ -263,6 +284,9 @@ func TestToPartsBase64Closure(t *testing.T) {
 	if parts[0].Type != entity.PartTypeImage {
 		t.Errorf("应为 image part, 实际 %+v", parts[0])
 	}
+	if parts[0].FileHash != "5d41402abc4b2a76b9719d911017c592" {
+		t.Errorf("base64 图 FileHash 应为解码字节 md5, 实际 %q", parts[0].FileHash)
+	}
 	data, err := os.ReadFile(parts[0].URL)
 	if err != nil {
 		t.Fatalf("读取缓存文件失败: %v", err)
@@ -284,6 +308,9 @@ func TestToPartsBase64ClosurePlus(t *testing.T) {
 	parts := toParts(message.Message{message.Image("base64://" + b64)}, cache)
 	if len(parts) != 1 || parts[0].URL == "" {
 		t.Fatalf("含 + 的 base64 应落盘闭合 URL, 实际 %+v", parts)
+	}
+	if parts[0].FileHash != md5Hex([]byte{0xFB}) {
+		t.Errorf("含 + 的 base64 FileHash 应为解码字节 md5, 实际 %q", parts[0].FileHash)
 	}
 	data, err := os.ReadFile(parts[0].URL)
 	if err != nil {
@@ -328,5 +355,35 @@ func TestToEventTypesAndReject(t *testing.T) {
 	}
 	if _, ok := toEvent(&zero.Event{PostType: "message"}); ok {
 		t.Error("message 事件不应被 toEvent 接受")
+	}
+}
+
+// TestNormalizeFileHash 校验 image 段 file/file_md5 归一化（B-027 增强）：32hex（含 .image/.pic
+// 后缀、含路径、大小写混合）→ 小写 hex；空 / base64:// / 垃圾值 → ""（不误判）。
+func TestNormalizeFileHash(t *testing.T) {
+	const h = "5d41402abc4b2a76b9719d911017c592"
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"空串", "", ""},
+		{"空白", "  ", ""},
+		{"base64前缀", "base64://aGVsbG8=", ""},
+		{"裸32hex", h, h},
+		{"大写32hex", strings.ToUpper(h), h},
+		{"image后缀", h + ".image", h},
+		{"pic后缀", h + ".pic", h},
+		{"反斜杠路径", `C:\qq\cache\` + h + `.image`, h},
+		{"正斜杠路径", "/x/" + h + ".image", h},
+		{"非hex垃圾", "not-a-real-hash", ""},
+		{"长度不足", "abc", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeFileHash(tc.in); got != tc.want {
+				t.Errorf("normalizeFileHash(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }

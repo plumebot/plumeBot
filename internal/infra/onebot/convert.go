@@ -1,6 +1,8 @@
 package onebot
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"strconv"
@@ -55,8 +57,10 @@ func senderDisplayName(u *zero.User) string {
 // 映射规则：
 //   - text → text；
 //   - at → at（文本标记 "[@qq]"/"[@全体]"；at-self 已被 ZeroBot 预处理裁掉，只剩 @他人/@全体）；
-//   - image → image（优先 url 字段；无 url 且为 base64:// 段时解码落盘 data/image_cache/<md5>、
-//     以本地路径闭合 URL，使 base64 图片可被描述；解码/落盘失败或 cache 为 nil → 留空占位）；
+//   - image → image（优先 url 字段；依 file/file_md5 提取内容 FileHash（一图一值，供描述
+//     缓存跨 URL 去重，B-027 增强）；无 url 且为 base64:// 段时解码落盘 data/image_cache/<md5>、
+//     以本地路径闭合 URL、算字节 md5 入 FileHash，使 base64 图片可被描述；
+//     解码/落盘失败或 cache 为 nil → 留空占位）；
 //   - record/video/file → 对应类型（url 为空则留空占位）；
 //   - face → text（表情 id 文本，保留进纯文本视图）；
 //   - 其余未知段（reply/forward/json/xml/music 等）→ text 占位「未知内容」（不静默丢弃，
@@ -76,12 +80,25 @@ func toParts(ev message.Message, cache *imagecache.Cache) []entity.ContentPart {
 			parts = append(parts, entity.ContentPart{Type: entity.PartTypeAt, Text: label})
 		case "image":
 			p := entity.ContentPart{Type: entity.PartTypeImage, URL: seg.Data["url"]}
-			if p.URL == "" && cache != nil {
-				if data, err := decodeBase64File(seg.Data["file"]); err == nil {
-					if path, err := cache.Save(data); err == nil {
-						p.URL = path // 落盘后只存本地路径，base64 不入库
+			if file := seg.Data["file"]; strings.HasPrefix(file, "base64://") {
+				// base64:// 入链：解码算内容 md5（base64 已在内存，解码算 hash 免费）→ FileHash；
+				// URL 空且 cache 非 nil → 落盘闭合（原逻辑，缓存文件名 = 同内容 md5，天然去重）。
+				if data, err := decodeBase64File(file); err == nil {
+					p.FileHash = md5Hex(data)
+					if p.URL == "" && cache != nil {
+						if path, err := cache.Save(data); err == nil {
+							p.URL = path // 落盘后只存本地路径，base64 不入库
+						}
 					}
 				} // 解码/落盘失败 → 保持占位（[图片]），不断链
+			} else {
+				// file 优先（NapCat 收图通常即内容 md5，可能带 .image 后缀）；file 为非 md5 的
+				// 文件名/垃圾值时，规范层 file_md5 兜底，绝不误判。
+				if h := normalizeFileHash(seg.Data["file"]); h != "" {
+					p.FileHash = h
+				} else if h := normalizeFileHash(seg.Data["file_md5"]); h != "" {
+					p.FileHash = h
+				}
 			}
 			parts = append(parts, p)
 		case "record":
@@ -112,6 +129,39 @@ func decodeBase64File(file string) ([]byte, error) {
 	}
 	// Std/RawStd 兜底逻辑统一在 pkg/base64util（B-030）。
 	return base64util.Decode(data)
+}
+
+// normalizeFileHash 提取图片内容 MD5（规范化为 32 位小写 hex）。识别 OneBot image 段
+// file/file_md5 的典型形态，垃圾值返回 ""（不误判）：
+//   - "<32hex>"：内容 md5 本身（NapCat 收图 file 常见）；
+//   - "<32hex>.image" / "<32hex>.pic"：md5 + NapCat 文件名后缀（需剥离）；
+//   - 全路径（如 C:\qq\cache\<md5>.image）：先取 basename 再剥后缀；
+//   - "base64://..."（发送方段）：非 hex，返回 ""（由调用方解码→字节 md5 路径）。
+func normalizeFileHash(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.HasPrefix(v, "base64://") {
+		return ""
+	}
+	// 取纯文件名（兼容 / 与 \ 两种分隔符，不依赖 filepath 的运行时 GOOS）。
+	if i := strings.LastIndexAny(v, "/\\"); i >= 0 {
+		v = v[i+1:]
+	}
+	v = strings.TrimSuffix(v, ".image")
+	v = strings.TrimSuffix(v, ".pic")
+	if len(v) != 32 {
+		return ""
+	}
+	b, err := hex.DecodeString(v)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b) // 规范化小写（大小写混合输入也归一）
+}
+
+// md5Hex 计算字节内容 md5（32 位小写 hex）。与 imagecache.Save 文件名算法一致。
+func md5Hex(data []byte) string {
+	sum := md5.Sum(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // toEvent 将 ZeroBot 通知/请求/元事件转换为领域层 entity.Event。
