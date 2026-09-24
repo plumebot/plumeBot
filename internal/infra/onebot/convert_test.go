@@ -248,6 +248,18 @@ func TestToParts(t *testing.T) {
 			want: []entity.ContentPart{{Type: entity.PartTypeImage, URL: "https://cdn/1.png", FileHash: "5d41402abc4b2a76b9719d911017c592"}},
 		},
 		{
+			// 实机 NapCat 形态：大写 md5 + .jpg 后缀（原先被整体拒收 → 描述缓存逐轮不命中）
+			name: "图片file为实机形态(大写md5+jpg后缀)",
+			in: message.Message{message.Segment{Type: "image", Data: map[string]string{
+				"url":  "https://multimedia.nt.qq.com.cn/download?fileid=xxx&rkey=yyy",
+				"file": "A5FF8510A27F2DD0C604078B1223D6CA.jpg",
+			}}},
+			want: []entity.ContentPart{{
+				Type: entity.PartTypeImage, URL: "https://multimedia.nt.qq.com.cn/download?fileid=xxx&rkey=yyy",
+				FileHash: "a5ff8510a27f2dd0c604078b1223d6ca",
+			}},
+		},
+		{
 			name: "图片file垃圾值",
 			in:   message.Message{message.Segment{Type: "image", Data: map[string]string{"url": "https://cdn/1.png", "file": "some-random-name"}}},
 			want: []entity.ContentPart{{Type: entity.PartTypeImage, URL: "https://cdn/1.png"}},
@@ -358,8 +370,10 @@ func TestToEventTypesAndReject(t *testing.T) {
 	}
 }
 
-// TestNormalizeFileHash 校验 image 段 file/file_md5 归一化（B-027 增强）：32hex（含 .image/.pic
-// 后缀、含路径、大小写混合）→ 小写 hex；空 / base64:// / 垃圾值 → ""（不误判）。
+// TestNormalizeFileHash 校验 image 段 file/file_md5 归一化（B-027 增强）：32hex（含扩展名后缀
+// .image/.pic/.jpg 等、含路径、大小写混合）→ 小写 hex；空 / base64:// / 垃圾值 → ""（不误判）。
+// 其中 `.jpg` 大写形态来自实机 NapCat 报文（`A5FF8510A27F2DD0C604078B1223D6CA.jpg`）——
+// 原先只剥 .image/.pic 固定后缀，此类被整体拒收 → 描述缓存退化为 URL 键、逐轮不命中。
 func TestNormalizeFileHash(t *testing.T) {
 	const h = "5d41402abc4b2a76b9719d911017c592"
 	cases := []struct {
@@ -374,10 +388,15 @@ func TestNormalizeFileHash(t *testing.T) {
 		{"大写32hex", strings.ToUpper(h), h},
 		{"image后缀", h + ".image", h},
 		{"pic后缀", h + ".pic", h},
+		{"实机大写jpg后缀", "A5FF8510A27F2DD0C604078B1223D6CA.jpg", "a5ff8510a27f2dd0c604078b1223d6ca"},
+		{"png后缀", h + ".png", h},
+		{"多段后缀", h + ".jpg.tmp", h},
 		{"反斜杠路径", `C:\qq\cache\` + h + `.image`, h},
 		{"正斜杠路径", "/x/" + h + ".image", h},
 		{"非hex垃圾", "not-a-real-hash", ""},
 		{"长度不足", "abc", ""},
+		{"16hex短hash拒收", "1234567890abcdef", ""},
+		{"非hex扩展名", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz.jpg", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

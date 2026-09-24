@@ -7,15 +7,22 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	zero "github.com/wdvxdr1123/ZeroBot"
 	"github.com/wdvxdr1123/ZeroBot/message"
+	"go.uber.org/zap"
 
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/infra/imagecache"
 	"plumebot/pkg/base64util"
 	"plumebot/pkg/logger"
 )
+
+// fileHashMissingWarned 保证「图片段无 FileHash」只记一次 Warn（含 NapCat 原始字段值），
+// 其后同类仅记 Debug。缺失是**来源侧形态问题**（非 NapCat 的后端、或字段用了未知文件名形态），
+// 每次拉图都刷一条 Warn 会淹没日志；但默认 info 级别下不记则永远看不到根因。
+var fileHashMissingWarned atomic.Bool
 
 // toMessage 将 ZeroBot 消息事件转换为领域层 entity.Message。
 // 仅接受群聊/私聊消息事件，其余返回 false。cache 用于 base64:// 图片入链闭合（可为 nil 关闭）。
@@ -102,13 +109,21 @@ func toParts(ev message.Message, cache *imagecache.Cache) []entity.ContentPart {
 				}
 			}
 			// 排障探针（图片描述缓存，架构 §17.2）：FileHash 是描述缓存的内容寻址键，
-			// 缺失时退化为带时效签名的 URL 键 → 同图每轮不命中。Debug 级、只记形态不记全量数据；
-			// 无 FileHash 的 http 图正是缓存失效根因（MediaDescriber 会拉字节补算 md5 兜底）。
+			// 缺失时描述器只能按拉取字节补算内容 md5（多一次本地拉取）；若连拉取也失败，
+			// 键退化为带时效签名的 URL → 同图每轮不命中。
+			// 首次缺失记 Warn（带 NapCat 原始字段值，定位「为何提取不出 32hex」），
+			// 其后同类仅记 Debug——避免逐图刷屏，但默认 info 级别下也能看见根因。
 			if p.FileHash == "" {
-				logger.Debug("图片段无 FileHash（描述缓存将退化 URL 键，或由描述器拉字节补算）",
+				fields := []zap.Field{
 					logger.S("url", p.URL),
 					logger.S("file_field", seg.Data["file"]),
-					logger.S("file_md5_field", seg.Data["file_md5"]))
+					logger.S("file_md5_field", seg.Data["file_md5"]),
+				}
+				if fileHashMissingWarned.CompareAndSwap(false, true) {
+					logger.Warn("图片段无 FileHash（NapCat 未给 32hex 内容 md5），描述缓存将由拉取字节补算", fields...)
+				} else {
+					logger.Debug("图片段无 FileHash（描述缓存将由拉取字节补算）", fields...)
+				}
 			} else {
 				logger.Debug("图片段 FileHash",
 					logger.S("file_hash", p.FileHash), logger.S("url", p.URL))
@@ -147,8 +162,9 @@ func decodeBase64File(file string) ([]byte, error) {
 // normalizeFileHash 提取图片内容 MD5（规范化为 32 位小写 hex）。识别 OneBot image 段
 // file/file_md5 的典型形态，垃圾值返回 ""（不误判）：
 //   - "<32hex>"：内容 md5 本身（NapCat 收图 file 常见）；
-//   - "<32hex>.image" / "<32hex>.pic"：md5 + NapCat 文件名后缀（需剥离）；
-//   - 全路径（如 C:\qq\cache\<md5>.image）：先取 basename 再剥后缀；
+//   - "<32hex>.<任意扩展名>"：md5 + 扩展名（实机形态 `<32HEX>.jpg`，也见 .image/.pic；
+//     用「剥首个点之后的全部」而非固定后缀表——命名形态不可穷举，避免再撞没见过的后缀）；
+//   - 全路径（如 C:\qq\cache\<md5>.jpg）：先取 basename 再剥扩展名；
 //   - "base64://..."（发送方段）：非 hex，返回 ""（由调用方解码→字节 md5 路径）。
 func normalizeFileHash(v string) string {
 	v = strings.TrimSpace(v)
@@ -159,8 +175,9 @@ func normalizeFileHash(v string) string {
 	if i := strings.LastIndexAny(v, "/\\"); i >= 0 {
 		v = v[i+1:]
 	}
-	v = strings.TrimSuffix(v, ".image")
-	v = strings.TrimSuffix(v, ".pic")
+	if i := strings.IndexByte(v, '.'); i >= 0 {
+		v = v[:i] // 剥扩展名（.image/.pic/.jpg/.png/... 一律适用）
+	}
 	if len(v) != 32 {
 		return ""
 	}

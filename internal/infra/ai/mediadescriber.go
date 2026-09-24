@@ -319,8 +319,9 @@ func (d *EinoMediaDescriber) lookupDesc(key string) (string, bool, bool) {
 // 内容寻址）→ URL 字符串兜底。FileHash 仅当存在可描述来源（URL/Base64 非空）时生效——
 // 避免「仅 FileHash 无来源」的占位段记入失败冷却，把同内容另有 URL 的来源一并冷却 60s。
 //
-// 注意：URL 兜底键是**完整 URL 字符串**（含 query），QQ 图片 URL 带时效签名 → 同图每轮键不同、
-// 缓存不命中；此时应由 convert 层提供 FileHash，或在拉图后按实际字节回填内容键（见 Describe）。
+// URL 兜底键是**完整 URL 字符串**（含 query），QQ 图片 URL 带时效签名 → 同图每轮键不同、
+// 缓存不命中。现实形态下几乎走不到这里：NapCat 收图段带 `file=<md5>.<ext>`（convert 提取），
+// 缺失时 Describe 也会拉字节补算内容 md5——本分支只服务「无 FileHash 且拉取失败」的降级场景。
 func imageContentKey(p entity.ContentPart) string {
 	hasSource := p.URL != "" || p.Base64 != ""
 	if p.FileHash != "" && hasSource {
