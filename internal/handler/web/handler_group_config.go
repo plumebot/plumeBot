@@ -65,7 +65,7 @@ func toGroupConfigDTO(cfg entity.GroupConfig, configured bool) response.GroupCon
 func (h *GroupConfigHandler) get(c *gin.Context) {
 	cfg, err := h.svc.GetGroupConfig(c.Request.Context(), c.Param("group_id"))
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, entity.ErrNotFound) {
 			ok(c, response.GroupConfig{Configured: false})
 			return
 		}

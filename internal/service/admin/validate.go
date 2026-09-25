@@ -30,7 +30,7 @@ const (
 // validateAuthInput 校验注册/登录入参：用户名非空 + 密码长度。
 func validateAuthInput(username, password string) error {
 	if strings.TrimSpace(username) == "" {
-		return validationErrorf("用户名不能为空")
+		return entity.ValidationErrorf("用户名不能为空")
 	}
 	return validatePassword(password)
 }
@@ -38,7 +38,7 @@ func validateAuthInput(username, password string) error {
 // validatePassword 校验密码最小长度（中文按字符计）。
 func validatePassword(password string) error {
 	if utf8.RuneCountInString(password) < minPasswordLen {
-		return validationErrorf("密码至少 %d 位", minPasswordLen)
+		return entity.ValidationErrorf("密码至少 %d 位", minPasswordLen)
 	}
 	return nil
 }
@@ -47,13 +47,13 @@ func validatePassword(password string) error {
 // 0/空列 = 走全局（合法）；mode/group_mgmt_enabled 为显式枚举；quiet_hours 严格 HH:MM。
 func validateGroupConfig(c *entity.GroupConfig) error {
 	if strings.TrimSpace(c.GroupID) == "" {
-		return validationErrorf("group_id 不能为空")
+		return entity.ValidationErrorf("group_id 不能为空")
 	}
 	if c.Mode != modeMention && c.Mode != modeAuto {
-		return validationErrorf("mode 只能是 mention 或 auto")
+		return entity.ValidationErrorf("mode 只能是 mention 或 auto")
 	}
 	if c.GroupMgmtEnabled != 0 && c.GroupMgmtEnabled != 1 {
-		return validationErrorf("group_mgmt_enabled 只能是 0 或 1")
+		return entity.ValidationErrorf("group_mgmt_enabled 只能是 0 或 1")
 	}
 	for _, p := range []struct {
 		name  string
@@ -65,7 +65,7 @@ func validateGroupConfig(c *entity.GroupConfig) error {
 		{"short_message_chars", c.ShortMessageChars},
 	} {
 		if p.value < 0 {
-			return validationErrorf("%s 不能为负数", p.name)
+			return entity.ValidationErrorf("%s 不能为负数", p.name)
 		}
 	}
 	if err := validateHM(c.QuietHoursStart); err != nil {
@@ -77,14 +77,14 @@ func validateGroupConfig(c *entity.GroupConfig) error {
 // validatePersona 校验人格模板：agent 非空、system_prompt 非空且不超上限。
 func validatePersona(p *entity.Persona) error {
 	if strings.TrimSpace(p.Agent) == "" {
-		return validationErrorf("agent 不能为空")
+		return entity.ValidationErrorf("agent 不能为空")
 	}
 	n := utf8.RuneCountInString(p.SystemPrompt)
 	if n == 0 {
-		return validationErrorf("system_prompt 不能为空")
+		return entity.ValidationErrorf("system_prompt 不能为空")
 	}
 	if n > maxSystemPromptLen {
-		return validationErrorf("system_prompt 超过上限 %d 字符", maxSystemPromptLen)
+		return entity.ValidationErrorf("system_prompt 超过上限 %d 字符", maxSystemPromptLen)
 	}
 	return nil
 }
@@ -92,13 +92,13 @@ func validatePersona(p *entity.Persona) error {
 // validateGroupProfile 校验群画像：数组元素 trim 去空 + 条数上限。
 func validateGroupProfile(p *entity.GroupProfile) error {
 	if strings.TrimSpace(p.GroupID) == "" {
-		return validationErrorf("group_id 不能为空")
+		return entity.ValidationErrorf("group_id 不能为空")
 	}
 	p.Topics = sanitizeStrings(p.Topics)
 	p.Rules = sanitizeStrings(p.Rules)
 	p.Atmosphere = sanitizeStrings(p.Atmosphere)
 	if len(p.Topics) > maxProfileItems || len(p.Rules) > maxProfileItems || len(p.Atmosphere) > maxProfileItems {
-		return validationErrorf("topics/rules/atmosphere 条数不能超过 %d", maxProfileItems)
+		return entity.ValidationErrorf("topics/rules/atmosphere 条数不能超过 %d", maxProfileItems)
 	}
 	return nil
 }
@@ -106,10 +106,10 @@ func validateGroupProfile(p *entity.GroupProfile) error {
 // validateJargon 校验黑话文本：trim 非空、不超字符上限。
 func validateJargon(jargon string) error {
 	if strings.TrimSpace(jargon) == "" {
-		return validationErrorf("黑话内容不能为空")
+		return entity.ValidationErrorf("黑话内容不能为空")
 	}
 	if utf8.RuneCountInString(jargon) > maxJargonLen {
-		return validationErrorf("黑话超过上限 %d 字符", maxJargonLen)
+		return entity.ValidationErrorf("黑话超过上限 %d 字符", maxJargonLen)
 	}
 	return nil
 }
@@ -117,13 +117,13 @@ func validateJargon(jargon string) error {
 // validateMemberFact 校验成员事实：user_id 非空、fact trim 非空且不超上限。
 func validateMemberFact(userID, fact string) error {
 	if strings.TrimSpace(userID) == "" {
-		return validationErrorf("user_id 不能为空")
+		return entity.ValidationErrorf("user_id 不能为空")
 	}
 	if strings.TrimSpace(fact) == "" {
-		return validationErrorf("事实内容不能为空")
+		return entity.ValidationErrorf("事实内容不能为空")
 	}
 	if utf8.RuneCountInString(fact) > maxFactLen {
-		return validationErrorf("事实超过上限 %d 字符", maxFactLen)
+		return entity.ValidationErrorf("事实超过上限 %d 字符", maxFactLen)
 	}
 	return nil
 }
@@ -134,7 +134,7 @@ func validateHM(s string) error {
 		return nil
 	}
 	if _, err := time.Parse("15:04", s); err != nil {
-		return validationErrorf("时间需按 HH:MM 格式（如 23:00）")
+		return entity.ValidationErrorf("时间需按 HH:MM 格式（如 23:00）")
 	}
 	return nil
 }

@@ -7,7 +7,6 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/logger"
 )
@@ -23,7 +22,7 @@ func (s *Service) Register(ctx context.Context, username, password string) (*ent
 		return nil, err
 	}
 	if len(users) > 0 {
-		return nil, ErrAlreadyRegistered
+		return nil, entity.ErrAlreadyRegistered
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -50,15 +49,15 @@ func (s *Service) Register(ctx context.Context, username, password string) (*ent
 func (s *Service) Login(ctx context.Context, username, password string) (*entity.AuthResult, error) {
 	u, err := s.store.GetAdminUserByName(ctx, username)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return nil, ErrInvalidCredentials
+		if errors.Is(err, entity.ErrNotFound) {
+			return nil, entity.ErrInvalidCredentials
 		}
 		return nil, err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
 		logger.From(ctx).Warn("admin 登录失败",
 			logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)))
-		return nil, ErrInvalidCredentials
+		return nil, entity.ErrInvalidCredentials
 	}
 	logger.From(ctx).Info("admin 登录成功",
 		logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)))
@@ -78,7 +77,7 @@ func (s *Service) ChangePassword(ctx context.Context, username, oldPwd, newPwd s
 		// 旧密码错误：Warn 带 IP（改密端点无每 IP 限流，猜旧密码需可发现，架构 §17.5）。
 		logger.From(ctx).Warn("admin 改密失败：旧密码错误",
 			logger.S("username", username), logger.S("ip", ClientIPFrom(ctx)))
-		return ErrWrongOldPassword
+		return entity.ErrWrongOldPassword
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPwd), bcrypt.DefaultCost)
 	if err != nil {

@@ -42,7 +42,7 @@ func (f *fakeStorage) GetGroupProfile(_ context.Context, groupID string) (*entit
 	if p, ok := f.groupProf[groupID]; ok {
 		return p, nil
 	}
-	return nil, domain.ErrNotFound
+	return nil, entity.ErrNotFound
 }
 
 func (f *fakeStorage) SaveSummary(_ context.Context, sum entity.Summary) error {

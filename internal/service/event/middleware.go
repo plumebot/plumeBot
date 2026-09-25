@@ -8,7 +8,7 @@ import (
 )
 
 // Handler 是消息管线的处理函数签名：接收一条消息，返回错误表示管线失败。
-// 中间件拦截时返回领域哨兵（如 domain.ErrRateLimited），
+// 中间件拦截时返回领域哨兵（如 entity.ErrRateLimited），
 // 由连接层通过 errors.Is 识别后按约定处理，避免上层重复记录日志。
 type Handler func(ctx context.Context, msg entity.Message) error
 

@@ -9,9 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler/web/dto/response"
-	"plumebot/internal/service/admin"
 	"plumebot/pkg/logger"
 )
 
@@ -30,19 +29,19 @@ func fail(c *gin.Context, httpStatus, code int, msg string) {
 
 // handleError 把 service 层错误映射为「HTTP 状态 + 业务码 + 中文消息」。
 func handleError(c *gin.Context, err error) {
-	var ve *admin.ValidationError
+	var ve *entity.ValidationError
 	switch {
-	case errors.Is(err, domain.ErrNotFound):
+	case errors.Is(err, entity.ErrNotFound):
 		fail(c, http.StatusNotFound, response.CodeNotFound, "目标不存在")
-	case errors.Is(err, domain.ErrConflict):
+	case errors.Is(err, entity.ErrConflict):
 		fail(c, http.StatusConflict, response.CodeConflict, "资源冲突，请刷新后重试")
 	case errors.As(err, &ve):
 		fail(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
-	case errors.Is(err, admin.ErrAlreadyRegistered):
+	case errors.Is(err, entity.ErrAlreadyRegistered):
 		fail(c, http.StatusForbidden, response.CodeForbidden, "已存在管理员账号，注册入口已关闭")
-	case errors.Is(err, admin.ErrInvalidCredentials):
+	case errors.Is(err, entity.ErrInvalidCredentials):
 		fail(c, http.StatusUnauthorized, response.CodeUnauthorized, "用户名或密码错误")
-	case errors.Is(err, admin.ErrWrongOldPassword):
+	case errors.Is(err, entity.ErrWrongOldPassword):
 		fail(c, http.StatusBadRequest, response.CodeBadRequest, "旧密码不正确")
 	default:
 		logger.Error("admin api 内部错误", logger.Err(err))

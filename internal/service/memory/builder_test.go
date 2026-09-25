@@ -51,7 +51,7 @@ func (f *builderStorage) GetGroupProfile(_ context.Context, groupID string) (*en
 	if p, ok := f.groupProf[groupID]; ok {
 		return p, nil
 	}
-	return nil, domain.ErrNotFound
+	return nil, entity.ErrNotFound
 }
 
 func (f *builderStorage) ListConfirmedJargon(_ context.Context, groupID string) ([]string, error) {
@@ -66,7 +66,7 @@ func (f *builderStorage) GetPersonaByAgent(_ context.Context, agent string) (*en
 	if p, ok := f.persona[agent]; ok {
 		return &entity.Persona{Agent: agent, SystemPrompt: p}, nil
 	}
-	return nil, domain.ErrNotFound
+	return nil, entity.ErrNotFound
 }
 
 func (f *builderStorage) ListSummaries(_ context.Context, chatID string, limit int) ([]entity.Summary, error) {

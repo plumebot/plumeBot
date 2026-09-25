@@ -32,7 +32,7 @@ type Storage interface {
 	// ListConfirmedJargon 列出指定群内已确认（status='confirmed'）的黑话。
 	// P6 prompt 组装只暴露 confirmed 黑话（pending 待人工审核）。
 	ListConfirmedJargon(ctx context.Context, groupID string) ([]string, error)
-	// ConfirmJargon 把一条黑话置为 confirmed；黑话不存在时返回 domain.ErrNotFound。
+	// ConfirmJargon 把一条黑话置为 confirmed；黑话不存在时返回 entity.ErrNotFound。
 	ConfirmJargon(ctx context.Context, groupID, jargon string) error
 
 	// ── member_facts ──
@@ -44,7 +44,7 @@ type Storage interface {
 	InsertPersona(ctx context.Context, persona entity.Persona) (int64, error)
 	UpdatePersona(ctx context.Context, persona entity.Persona) error
 	GetPersona(ctx context.Context, id int64) (*entity.Persona, error)
-	// GetPersonaByAgent 按绑定的 agent 名查询人格模板；不存在时返回 domain.ErrNotFound。
+	// GetPersonaByAgent 按绑定的 agent 名查询人格模板；不存在时返回 entity.ErrNotFound。
 	GetPersonaByAgent(ctx context.Context, agent string) (*entity.Persona, error)
 
 	// ── bot_state ──
@@ -60,7 +60,7 @@ type Storage interface {
 	// ── group_config (admin) ──
 	// ListGroupConfigs 列出全部已配置群的静态配置（管理面；未配置群不出现）。
 	ListGroupConfigs(ctx context.Context) ([]entity.GroupConfig, error)
-	// DeleteGroupConfig 删除单群配置行（恢复全局兜底）；不存在时返回 domain.ErrNotFound。
+	// DeleteGroupConfig 删除单群配置行（恢复全局兜底）；不存在时返回 entity.ErrNotFound。
 	DeleteGroupConfig(ctx context.Context, groupID string) error
 
 	// ── persona (admin) ──
@@ -74,17 +74,17 @@ type Storage interface {
 	ListJargonWithStatus(ctx context.Context, groupID string) ([]entity.Jargon, error)
 
 	// ── group_profile (admin) ──
-	// DeleteGroupProfile 删除单群画像（恢复「无画像」态）；不存在时返回 domain.ErrNotFound。
+	// DeleteGroupProfile 删除单群画像（恢复「无画像」态）；不存在时返回 entity.ErrNotFound。
 	DeleteGroupProfile(ctx context.Context, groupID string) error
 
 	// ── admin_user ──
-	// GetAdminUserByName 按用户名查询管理员账号；不存在时返回 domain.ErrNotFound。
+	// GetAdminUserByName 按用户名查询管理员账号；不存在时返回 entity.ErrNotFound。
 	GetAdminUserByName(ctx context.Context, username string) (*entity.AdminUser, error)
-	// CreateAdminUser 创建管理员账号；username 冲突（UNIQUE）时返回 domain.ErrConflict。
+	// CreateAdminUser 创建管理员账号；username 冲突（UNIQUE）时返回 entity.ErrConflict。
 	CreateAdminUser(ctx context.Context, u entity.AdminUser) (int64, error)
 	// ListAdminUsers 列出全部管理员账号（注册门控用）。
 	ListAdminUsers(ctx context.Context) ([]entity.AdminUser, error)
-	// UpdateAdminUserPassword 更新指定用户的密码散列；用户名不存在时返回 domain.ErrNotFound。
+	// UpdateAdminUserPassword 更新指定用户的密码散列；用户名不存在时返回 entity.ErrNotFound。
 	UpdateAdminUserPassword(ctx context.Context, username, hash string) error
 
 	// Close 关闭数据库连接。

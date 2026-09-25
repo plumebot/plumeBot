@@ -129,7 +129,7 @@ cmd → handler/web ──(domain.Admin 接口)──→ service/admin → domai
 
 - `service/admin` 依赖 **`domain.Storage` 接口 + `*memory.MemoryService` + `*jwt.Manager`**，不 import infra；
 - SQL 语句全部留在 `infra/sqlite/queries.go` 包级 const（规则 10），admin 不写 SQL；
-- 哨兵错误继续用 `domain.ErrXxx`，上层 `errors.Is` 判断。
+- 哨兵错误与校验失败错误统一定义在 `internal/domain/entity/errors.go`（引用 `entity.ErrXxx` / `entity.ValidationError`），上层 `errors.Is` 判断。
 
 ### 4.3 Service 划分（定案 A：单 service）
 

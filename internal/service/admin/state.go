@@ -9,7 +9,7 @@ import (
 	"plumebot/internal/domain/entity"
 )
 
-// GetBotState 按会话键查询运行态；不存在返回 domain.ErrNotFound。
+// GetBotState 按会话键查询运行态；不存在返回 entity.ErrNotFound。
 func (s *Service) GetBotState(ctx context.Context, sessionKey string) (*entity.BotState, error) {
 	return s.store.GetBotState(ctx, sessionKey)
 }

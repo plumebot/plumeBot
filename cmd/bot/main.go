@@ -116,7 +116,7 @@ func main() {
 		agentName = config.DefaultAgentName
 	}
 	personaFound := true
-	if _, err := storageInfra.GetPersonaByAgent(ctx, agentName); errors.Is(err, domain.ErrNotFound) {
+	if _, err := storageInfra.GetPersonaByAgent(ctx, agentName); errors.Is(err, entity.ErrNotFound) {
 		personaFound = false
 		prompt := cfg.Agent.SystemPrompt
 		if prompt == "" {

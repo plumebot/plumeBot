@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 	"plumebot/internal/handler/web/dto/response"
 )
 
@@ -35,7 +36,7 @@ func (h *StateHandler) get(c *gin.Context) {
 	key := c.Param("session_key")
 	st, err := h.svc.GetBotState(c.Request.Context(), key)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, entity.ErrNotFound) {
 			fail(c, http.StatusNotFound, response.CodeNotFound, "该会话暂无运行态（键 "+key+"）")
 			return
 		}

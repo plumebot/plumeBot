@@ -263,7 +263,7 @@ func (s *Storage) UpsertGroupProfile(ctx context.Context, p entity.GroupProfile)
 	return err
 }
 
-// GetGroupProfile 按群 ID 查询群聊画像。不存在时返回 domain.ErrNotFound。
+// GetGroupProfile 按群 ID 查询群聊画像。不存在时返回 entity.ErrNotFound。
 func (s *Storage) GetGroupProfile(ctx context.Context, groupID string) (*entity.GroupProfile, error) {
 	row := s.db.QueryRowContext(ctx, sqlGetGroupProfile, groupID)
 
@@ -271,7 +271,7 @@ func (s *Storage) GetGroupProfile(ctx context.Context, groupID string) (*entity.
 	var topics, rules, atmosphere string
 	if err := row.Scan(&p.GroupID, &p.Culture, &topics, &p.ActiveHours, &rules, &atmosphere); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
+			return nil, entity.ErrNotFound
 		}
 		return nil, err
 	}
@@ -334,7 +334,7 @@ func (s *Storage) ListConfirmedJargon(ctx context.Context, groupID string) ([]st
 	return out, rows.Err()
 }
 
-// ConfirmJargon 把一条黑话置为 confirmed（待确认 → 已确认）。黑话不存在时返回 domain.ErrNotFound。
+// ConfirmJargon 把一条黑话置为 confirmed（待确认 → 已确认）。黑话不存在时返回 entity.ErrNotFound。
 func (s *Storage) ConfirmJargon(ctx context.Context, groupID, jargon string) error {
 	res, err := s.db.ExecContext(ctx, sqlConfirmJargon, groupID, jargon)
 	if err != nil {
@@ -343,7 +343,7 @@ func (s *Storage) ConfirmJargon(ctx context.Context, groupID, jargon string) err
 	if n, err := res.RowsAffected(); err != nil {
 		return err
 	} else if n == 0 {
-		return domain.ErrNotFound
+		return entity.ErrNotFound
 	}
 	return nil
 }
@@ -399,14 +399,14 @@ func (s *Storage) UpdatePersona(ctx context.Context, p entity.Persona) error {
 	return err
 }
 
-// GetPersona 按 ID 查询人格模板。不存在时返回 domain.ErrNotFound。
+// GetPersona 按 ID 查询人格模板。不存在时返回 entity.ErrNotFound。
 func (s *Storage) GetPersona(ctx context.Context, id int64) (*entity.Persona, error) {
 	row := s.db.QueryRowContext(ctx, sqlGetPersona, id)
 
 	var p entity.Persona
 	if err := row.Scan(&p.ID, &p.Agent, &p.Name, &p.SystemPrompt); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
+			return nil, entity.ErrNotFound
 		}
 		return nil, err
 	}
@@ -414,14 +414,14 @@ func (s *Storage) GetPersona(ctx context.Context, id int64) (*entity.Persona, er
 }
 
 // GetPersonaByAgent 按绑定的 agent 名查询人格模板（人格选择 agent，agent 字段 UNIQUE）。
-// 不存在时返回 domain.ErrNotFound。
+// 不存在时返回 entity.ErrNotFound。
 func (s *Storage) GetPersonaByAgent(ctx context.Context, agent string) (*entity.Persona, error) {
 	row := s.db.QueryRowContext(ctx, sqlGetPersonaByAgent, agent)
 
 	var p entity.Persona
 	if err := row.Scan(&p.ID, &p.Agent, &p.Name, &p.SystemPrompt); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
+			return nil, entity.ErrNotFound
 		}
 		return nil, err
 	}
@@ -436,14 +436,14 @@ func (s *Storage) UpsertBotState(ctx context.Context, st entity.BotState) error 
 	return err
 }
 
-// GetBotState 按群 ID 查询 bot 状态。不存在时返回 domain.ErrNotFound。
+// GetBotState 按群 ID 查询 bot 状态。不存在时返回 entity.ErrNotFound。
 func (s *Storage) GetBotState(ctx context.Context, groupID string) (*entity.BotState, error) {
 	row := s.db.QueryRowContext(ctx, sqlGetBotState, groupID)
 
 	var st entity.BotState
 	if err := row.Scan(&st.GroupID, &st.State); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
+			return nil, entity.ErrNotFound
 		}
 		return nil, err
 	}
@@ -461,7 +461,7 @@ func (s *Storage) UpsertGroupConfig(ctx context.Context, cfg entity.GroupConfig)
 	return err
 }
 
-// GetGroupConfig 按群 ID 查询静态配置。不存在时返回 domain.ErrNotFound
+// GetGroupConfig 按群 ID 查询静态配置。不存在时返回 entity.ErrNotFound
 // （群管理开关语义：无配置行 = 默认关，见 entity.GroupConfig.GroupMgmtEnabled 注释）。
 func (s *Storage) GetGroupConfig(ctx context.Context, groupID string) (*entity.GroupConfig, error) {
 	row := s.db.QueryRowContext(ctx, sqlGetGroupConfig, groupID)
@@ -471,7 +471,7 @@ func (s *Storage) GetGroupConfig(ctx context.Context, groupID string) (*entity.G
 		&c.EnergyThreshold, &c.CooldownSeconds, &c.ConsecutiveLimit, &c.RestSeconds,
 		&c.QuietHoursStart, &c.QuietHoursEnd, &c.ShortMessageChars, &c.GroupMgmtEnabled); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, domain.ErrNotFound
+			return nil, entity.ErrNotFound
 		}
 		return nil, err
 	}

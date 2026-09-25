@@ -25,7 +25,7 @@ type fakeAdminStore struct {
 func (f *fakeAdminStore) GetAdminUserByName(_ context.Context, username string) (*entity.AdminUser, error) {
 	u, ok := f.users[username]
 	if !ok {
-		return nil, domain.ErrNotFound
+		return nil, entity.ErrNotFound
 	}
 	return &u, nil
 }
@@ -40,7 +40,7 @@ func (f *fakeAdminStore) ListAdminUsers(_ context.Context) ([]entity.AdminUser, 
 
 func (f *fakeAdminStore) CreateAdminUser(_ context.Context, u entity.AdminUser) (int64, error) {
 	if _, ok := f.users[u.Username]; ok {
-		return 0, domain.ErrConflict
+		return 0, entity.ErrConflict
 	}
 	u.ID = int64(len(f.users) + 1)
 	f.users[u.Username] = u
@@ -50,7 +50,7 @@ func (f *fakeAdminStore) CreateAdminUser(_ context.Context, u entity.AdminUser) 
 func (f *fakeAdminStore) UpdateAdminUserPassword(_ context.Context, username, hash string) error {
 	u, ok := f.users[username]
 	if !ok {
-		return domain.ErrNotFound
+		return entity.ErrNotFound
 	}
 	u.PasswordHash = hash
 	f.users[username] = u
@@ -64,7 +64,7 @@ func newTestSvc() *Service {
 
 // isValidation 判断错误是否为 ValidationError。
 func isValidation(err error) bool {
-	var ve *ValidationError
+	var ve *entity.ValidationError
 	return errors.As(err, &ve)
 }
 
@@ -93,8 +93,8 @@ func TestRegisterFirstAdmin(t *testing.T) {
 	}
 
 	// 门控：已有账号 → 注册关闭。
-	if _, err := svc.Register(ctx, "someone", "password123"); !errors.Is(err, ErrAlreadyRegistered) {
-		t.Fatalf("已有账号注册应报 ErrAlreadyRegistered, 实际: %v", err)
+	if _, err := svc.Register(ctx, "someone", "password123"); !errors.Is(err, entity.ErrAlreadyRegistered) {
+		t.Fatalf("已有账号注册应报 entity.ErrAlreadyRegistered, 实际: %v", err)
 	}
 }
 
@@ -104,11 +104,11 @@ func TestRegisterValidation(t *testing.T) {
 
 	// 密码不足 8 位。
 	if _, err := svc.Register(ctx, "admin", "short1"); !isValidation(err) {
-		t.Fatalf("短密码应报 ValidationError, 实际: %v", err)
+		t.Fatalf("短密码应报 entity.ValidationError, 实际: %v", err)
 	}
 	// 用户名为空。
 	if _, err := svc.Register(ctx, "  ", "password123"); !isValidation(err) {
-		t.Fatalf("空用户名应报 ValidationError, 实际: %v", err)
+		t.Fatalf("空用户名应报 entity.ValidationError, 实际: %v", err)
 	}
 	// 校验失败不落库（门控仍开放）。
 	if _, err := svc.Register(ctx, "admin", "password123"); err != nil {
@@ -130,12 +130,12 @@ func TestLogin(t *testing.T) {
 		t.Fatalf("正确凭证登录应成功: %v", err)
 	}
 	// 密码错误 → 统一 ErrInvalidCredentials（防探测）。
-	if _, err := svc.Login(ctx, "admin", "wrong-password"); !errors.Is(err, ErrInvalidCredentials) {
-		t.Fatalf("密码错误应报 ErrInvalidCredentials, 实际: %v", err)
+	if _, err := svc.Login(ctx, "admin", "wrong-password"); !errors.Is(err, entity.ErrInvalidCredentials) {
+		t.Fatalf("密码错误应报 entity.ErrInvalidCredentials, 实际: %v", err)
 	}
 	// 用户不存在 → 同一错误（不区分）。
-	if _, err := svc.Login(ctx, "ghost", "password123"); !errors.Is(err, ErrInvalidCredentials) {
-		t.Fatalf("用户不存在应报 ErrInvalidCredentials, 实际: %v", err)
+	if _, err := svc.Login(ctx, "ghost", "password123"); !errors.Is(err, entity.ErrInvalidCredentials) {
+		t.Fatalf("用户不存在应报 entity.ErrInvalidCredentials, 实际: %v", err)
 	}
 }
 
@@ -148,15 +148,15 @@ func TestChangePassword(t *testing.T) {
 	}
 
 	// 旧码错误 → 拒绝。
-	if err := svc.ChangePassword(ctx, "admin", "wrong-old", "newpass123"); !errors.Is(err, ErrWrongOldPassword) {
-		t.Fatalf("旧码错误应报 ErrWrongOldPassword, 实际: %v", err)
+	if err := svc.ChangePassword(ctx, "admin", "wrong-old", "newpass123"); !errors.Is(err, entity.ErrWrongOldPassword) {
+		t.Fatalf("旧码错误应报 entity.ErrWrongOldPassword, 实际: %v", err)
 	}
 	// 成功改密。
 	if err := svc.ChangePassword(ctx, "admin", "password123", "newpass123"); err != nil {
 		t.Fatalf("改密失败: %v", err)
 	}
 	// 旧密码登录失败、新密码登录成功。
-	if _, err := svc.Login(ctx, "admin", "password123"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := svc.Login(ctx, "admin", "password123"); !errors.Is(err, entity.ErrInvalidCredentials) {
 		t.Fatalf("旧密码改后应失效, 实际: %v", err)
 	}
 	if _, err := svc.Login(ctx, "admin", "newpass123"); err != nil {

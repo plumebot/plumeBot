@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 )
 
@@ -39,13 +38,13 @@ func (s *Service) AddJargon(ctx context.Context, by, groupID, jargon string) (*e
 		return nil, err
 	}
 	if len(items) >= maxJargonPerGroup {
-		return nil, validationErrorf("该群黑话已达上限 %d 条", maxJargonPerGroup)
+		return nil, entity.ValidationErrorf("该群黑话已达上限 %d 条", maxJargonPerGroup)
 	}
 	if err := s.store.AddJargon(ctx, groupID, jargon); err != nil {
 		return nil, err
 	}
 	// 已是 confirmed 的重复添加 → ConfirmJargon 影响 0 行 → ErrNotFound，视为成功（决策 D8）。
-	if err := s.store.ConfirmJargon(ctx, groupID, jargon); err != nil && !errors.Is(err, domain.ErrNotFound) {
+	if err := s.store.ConfirmJargon(ctx, groupID, jargon); err != nil && !errors.Is(err, entity.ErrNotFound) {
 		return nil, err
 	}
 	s.audit(ctx, by, "group_jargon", groupID+"/"+jargon)
@@ -53,14 +52,14 @@ func (s *Service) AddJargon(ctx context.Context, by, groupID, jargon string) (*e
 }
 
 // DeleteJargon 删除黑话；先查证存在（决策 D7：不改共享幂等删语义，避免 Agent 的「删不存在」变错误），
-// 不存在返回 domain.ErrNotFound。
+// 不存在返回 entity.ErrNotFound。
 func (s *Service) DeleteJargon(ctx context.Context, by, groupID, jargon string) error {
 	items, err := s.store.ListJargonWithStatus(ctx, groupID)
 	if err != nil {
 		return err
 	}
 	if !containsJargon(items, jargon) {
-		return domain.ErrNotFound
+		return entity.ErrNotFound
 	}
 	if err := s.store.DeleteJargon(ctx, groupID, jargon); err != nil {
 		return err
@@ -69,7 +68,7 @@ func (s *Service) DeleteJargon(ctx context.Context, by, groupID, jargon string) 
 	return nil
 }
 
-// ConfirmJargon 审核确认 pending → confirmed；黑话不存在时返回 domain.ErrNotFound。
+// ConfirmJargon 审核确认 pending → confirmed；黑话不存在时返回 entity.ErrNotFound。
 func (s *Service) ConfirmJargon(ctx context.Context, by, groupID, jargon string) (*entity.Jargon, error) {
 	if err := s.store.ConfirmJargon(ctx, groupID, jargon); err != nil {
 		return nil, err

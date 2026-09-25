@@ -18,7 +18,6 @@ import (
 	"sync"
 	"testing"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 )
 
@@ -71,7 +70,7 @@ func TestConcurrentReadWriteNoBusy(t *testing.T) {
 				}))
 				record(st.UpsertGroupConfig(ctx, entity.GroupConfig{GroupID: "g1", Mode: "auto"}))
 
-				if _, err := st.GetGroupConfig(ctx, "g1"); err != nil && !errors.Is(err, domain.ErrNotFound) {
+				if _, err := st.GetGroupConfig(ctx, "g1"); err != nil && !errors.Is(err, entity.ErrNotFound) {
 					record(err)
 				}
 				if _, err := st.ListGroupConfigs(ctx); err != nil {

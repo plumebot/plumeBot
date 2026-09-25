@@ -9,7 +9,7 @@ import (
 	"plumebot/internal/domain/entity"
 )
 
-// GetGroupProfile 查询群画像；不存在时返回 domain.ErrNotFound。
+// GetGroupProfile 查询群画像；不存在时返回 entity.ErrNotFound。
 func (s *Service) GetGroupProfile(ctx context.Context, groupID string) (*entity.GroupProfile, error) {
 	return s.store.GetGroupProfile(ctx, groupID)
 }
@@ -27,7 +27,7 @@ func (s *Service) UpsertGroupProfile(ctx context.Context, by string, p entity.Gr
 	return &p, nil
 }
 
-// DeleteGroupProfile 删除群画像（恢复无画像态）并失效内存缓存；不存在时返回 domain.ErrNotFound。
+// DeleteGroupProfile 删除群画像（恢复无画像态）并失效内存缓存；不存在时返回 entity.ErrNotFound。
 func (s *Service) DeleteGroupProfile(ctx context.Context, by, groupID string) error {
 	if err := s.store.DeleteGroupProfile(ctx, groupID); err != nil {
 		return err

@@ -132,7 +132,7 @@ func (s *PluginService) loadPlugin(dir string) error {
 func (s *PluginService) Dispatch(ctx context.Context, req entity.PluginRequest) (entity.PluginResult, error) {
 	h, ok := s.commands[req.Command]
 	if !ok {
-		return entity.PluginResult{}, domain.ErrNotFound
+		return entity.PluginResult{}, entity.ErrNotFound
 	}
 	res, err := h.plugin.Execute(ctx, req)
 	if err != nil {

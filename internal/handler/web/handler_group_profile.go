@@ -35,7 +35,7 @@ func (h *GroupProfileHandler) RegisterRoutes(g *gin.RouterGroup) {
 func (h *GroupProfileHandler) get(c *gin.Context) {
 	p, err := h.svc.GetGroupProfile(c.Request.Context(), c.Param("group_id"))
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, entity.ErrNotFound) {
 			ok(c, response.GroupProfile{Configured: false})
 			return
 		}

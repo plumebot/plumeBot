@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/config"
 	"plumebot/pkg/logger"
@@ -198,7 +197,7 @@ func (s *MemoryService) personaText(ctx context.Context) string {
 	if err == nil && p != nil && strings.TrimSpace(p.SystemPrompt) != "" {
 		return p.SystemPrompt
 	}
-	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+	if err != nil && !errors.Is(err, entity.ErrNotFound) {
 		logger.Warn("加载人格模板失败，使用兜底人设", logger.S("agent", name), logger.Err(err))
 	}
 	if s.defaultPersona != "" {

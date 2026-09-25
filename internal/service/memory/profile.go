@@ -69,7 +69,7 @@ func (p *ProfileCache) Invalidate(groupID string) {
 func (p *ProfileCache) loadGroupProfile(ctx context.Context, groupID string) (*entity.GroupProfile, bool) {
 	prof, err := p.store.GetGroupProfile(ctx, groupID)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, entity.ErrNotFound) {
 			return nil, true
 		}
 		logger.Warn("加载群画像失败",

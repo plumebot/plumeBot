@@ -7,7 +7,6 @@ import (
 	"errors"
 	"testing"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 )
 
@@ -77,11 +76,11 @@ func TestListDeleteGroupConfig(t *testing.T) {
 	if err := s.DeleteGroupConfig(ctx, "g1"); err != nil {
 		t.Fatalf("DeleteGroupConfig 失败: %v", err)
 	}
-	if _, err := s.GetGroupConfig(ctx, "g1"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.GetGroupConfig(ctx, "g1"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删除后应报 ErrNotFound, 实际: %v", err)
 	}
 	// 删除不存在 → ErrNotFound。
-	if err := s.DeleteGroupConfig(ctx, "g-nope"); !errors.Is(err, domain.ErrNotFound) {
+	if err := s.DeleteGroupConfig(ctx, "g-nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删除不存在应报 ErrNotFound, 实际: %v", err)
 	}
 }
@@ -184,10 +183,10 @@ func TestDeleteGroupProfile(t *testing.T) {
 	if err := s.DeleteGroupProfile(ctx, "g1"); err != nil {
 		t.Fatalf("DeleteGroupProfile 失败: %v", err)
 	}
-	if _, err := s.GetGroupProfile(ctx, "g1"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.GetGroupProfile(ctx, "g1"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删除后应报 ErrNotFound, 实际: %v", err)
 	}
-	if err := s.DeleteGroupProfile(ctx, "g-nope"); !errors.Is(err, domain.ErrNotFound) {
+	if err := s.DeleteGroupProfile(ctx, "g-nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删除不存在应报 ErrNotFound, 实际: %v", err)
 	}
 }
@@ -217,12 +216,12 @@ func TestAdminUser(t *testing.T) {
 		t.Fatalf("查询结果不符, 实际: %+v", u)
 	}
 	// 不存在 → ErrNotFound。
-	if _, err := s.GetAdminUserByName(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.GetAdminUserByName(ctx, "nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("不存在应报 ErrNotFound, 实际: %v", err)
 	}
 
 	// 同名冲突 → ErrConflict。
-	if _, err := s.CreateAdminUser(ctx, entity.AdminUser{Username: "admin", PasswordHash: "hash2"}); !errors.Is(err, domain.ErrConflict) {
+	if _, err := s.CreateAdminUser(ctx, entity.AdminUser{Username: "admin", PasswordHash: "hash2"}); !errors.Is(err, entity.ErrConflict) {
 		t.Fatalf("用户名冲突应报 ErrConflict, 实际: %v", err)
 	}
 
@@ -252,7 +251,7 @@ func TestAdminUser(t *testing.T) {
 		t.Fatalf("密码散列应更新且 updated_at 落库, 实际: %+v", u)
 	}
 	// 改密目标不存在 → ErrNotFound。
-	if err := s.UpdateAdminUserPassword(ctx, "nope", "hash"); !errors.Is(err, domain.ErrNotFound) {
+	if err := s.UpdateAdminUserPassword(ctx, "nope", "hash"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("改密不存在账号应报 ErrNotFound, 实际: %v", err)
 	}
 }

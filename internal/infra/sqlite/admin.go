@@ -12,7 +12,6 @@ import (
 	sqlitedrv "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 )
 
@@ -39,7 +38,7 @@ func (s *Storage) ListGroupConfigs(ctx context.Context) ([]entity.GroupConfig, e
 	return out, rows.Err()
 }
 
-// DeleteGroupConfig 删除单群配置行（恢复全局兜底）；不存在时返回 domain.ErrNotFound。
+// DeleteGroupConfig 删除单群配置行（恢复全局兜底）；不存在时返回 entity.ErrNotFound。
 func (s *Storage) DeleteGroupConfig(ctx context.Context, groupID string) error {
 	res, err := s.db.ExecContext(ctx, sqlDeleteGroupConfig, groupID)
 	if err != nil {
@@ -48,7 +47,7 @@ func (s *Storage) DeleteGroupConfig(ctx context.Context, groupID string) error {
 	if n, err := res.RowsAffected(); err != nil {
 		return err
 	} else if n == 0 {
-		return domain.ErrNotFound
+		return entity.ErrNotFound
 	}
 	return nil
 }
@@ -103,7 +102,7 @@ func (s *Storage) ListJargonWithStatus(ctx context.Context, groupID string) ([]e
 
 // ──────────────────────────── group_profile (admin) ────────────────────────────
 
-// DeleteGroupProfile 删除单群画像（恢复「无画像」态）；不存在时返回 domain.ErrNotFound。
+// DeleteGroupProfile 删除单群画像（恢复「无画像」态）；不存在时返回 entity.ErrNotFound。
 func (s *Storage) DeleteGroupProfile(ctx context.Context, groupID string) error {
 	res, err := s.db.ExecContext(ctx, sqlDeleteGroupProfile, groupID)
 	if err != nil {
@@ -112,33 +111,33 @@ func (s *Storage) DeleteGroupProfile(ctx context.Context, groupID string) error 
 	if n, err := res.RowsAffected(); err != nil {
 		return err
 	} else if n == 0 {
-		return domain.ErrNotFound
+		return entity.ErrNotFound
 	}
 	return nil
 }
 
 // ──────────────────────────── admin_user ────────────────────────────
 
-// GetAdminUserByName 按用户名查询管理员账号；不存在时返回 domain.ErrNotFound。
+// GetAdminUserByName 按用户名查询管理员账号；不存在时返回 entity.ErrNotFound。
 func (s *Storage) GetAdminUserByName(ctx context.Context, username string) (*entity.AdminUser, error) {
 	row := s.db.QueryRowContext(ctx, sqlGetAdminUserByName, username)
 
 	var u entity.AdminUser
 	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, domain.ErrNotFound
+			return nil, entity.ErrNotFound
 		}
 		return nil, err
 	}
 	return &u, nil
 }
 
-// CreateAdminUser 创建管理员账号；username 冲突（UNIQUE）时返回 domain.ErrConflict。
+// CreateAdminUser 创建管理员账号；username 冲突（UNIQUE）时返回 entity.ErrConflict。
 func (s *Storage) CreateAdminUser(ctx context.Context, u entity.AdminUser) (int64, error) {
 	res, err := s.db.ExecContext(ctx, sqlCreateAdminUser, u.Username, u.PasswordHash, u.CreatedAt, u.UpdatedAt)
 	if err != nil {
 		if isUniqueConstraint(err) {
-			return 0, domain.ErrConflict
+			return 0, entity.ErrConflict
 		}
 		return 0, err
 	}
@@ -164,7 +163,7 @@ func (s *Storage) ListAdminUsers(ctx context.Context) ([]entity.AdminUser, error
 	return out, rows.Err()
 }
 
-// UpdateAdminUserPassword 更新指定用户的密码散列；用户名不存在时返回 domain.ErrNotFound。
+// UpdateAdminUserPassword 更新指定用户的密码散列；用户名不存在时返回 entity.ErrNotFound。
 // updated_at 由 SQL 内 strftime('%s','now') 落库。
 func (s *Storage) UpdateAdminUserPassword(ctx context.Context, username, hash string) error {
 	res, err := s.db.ExecContext(ctx, sqlUpdateAdminUserPassword, hash, username)
@@ -174,7 +173,7 @@ func (s *Storage) UpdateAdminUserPassword(ctx context.Context, username, hash st
 	if n, err := res.RowsAffected(); err != nil {
 		return err
 	} else if n == 0 {
-		return domain.ErrNotFound
+		return entity.ErrNotFound
 	}
 	return nil
 }

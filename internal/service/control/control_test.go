@@ -39,7 +39,7 @@ func (f *fakeStore) GetGroupConfig(_ context.Context, groupID string) (*entity.G
 	if c, ok := f.cfgs[groupID]; ok {
 		return c, nil
 	}
-	return nil, domain.ErrNotFound
+	return nil, entity.ErrNotFound
 }
 
 func (f *fakeStore) UpsertGroupConfig(_ context.Context, cfg entity.GroupConfig) error {
@@ -64,7 +64,7 @@ func (f *fakeStore) GetBotState(_ context.Context, groupID string) (*entity.BotS
 	if s, ok := f.states[groupID]; ok {
 		return s, nil
 	}
-	return nil, domain.ErrNotFound
+	return nil, entity.ErrNotFound
 }
 
 func (f *fakeStore) UpsertBotState(_ context.Context, st entity.BotState) error {

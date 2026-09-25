@@ -13,7 +13,7 @@ func (s *Service) ListGroupConfigs(ctx context.Context) ([]entity.GroupConfig, e
 	return s.store.ListGroupConfigs(ctx)
 }
 
-// GetGroupConfig 查询单群配置；不存在时返回 domain.ErrNotFound。
+// GetGroupConfig 查询单群配置；不存在时返回 entity.ErrNotFound。
 func (s *Service) GetGroupConfig(ctx context.Context, groupID string) (*entity.GroupConfig, error) {
 	return s.store.GetGroupConfig(ctx, groupID)
 }
@@ -30,7 +30,7 @@ func (s *Service) UpsertGroupConfig(ctx context.Context, by string, cfg entity.G
 	return &cfg, nil
 }
 
-// DeleteGroupConfig 删除单群配置（恢复全局兜底）；不存在时返回 domain.ErrNotFound。
+// DeleteGroupConfig 删除单群配置（恢复全局兜底）；不存在时返回 entity.ErrNotFound。
 func (s *Service) DeleteGroupConfig(ctx context.Context, by, groupID string) error {
 	if err := s.store.DeleteGroupConfig(ctx, groupID); err != nil {
 		return err

@@ -127,10 +127,10 @@ func msgTraceID(msg entity.Message) string {
 // decideReply 根据管线返回的错误决定回复文案；不需要回复时返回空串。
 // 拆成纯函数便于单测：限流/敏感词命中 → 固定文案，其余错误/无错误 → 不回复。
 func decideReply(err error) string {
-	if errors.Is(err, domain.ErrRateLimited) {
+	if errors.Is(err, entity.ErrRateLimited) {
 		return rateLimitedReply
 	}
-	if errors.Is(err, domain.ErrSensitiveWord) {
+	if errors.Is(err, entity.ErrSensitiveWord) {
 		return sensitiveWordReply
 	}
 	return ""

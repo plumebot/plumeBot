@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/logger"
 )
@@ -81,7 +80,7 @@ func TestDiscoverAndDispatch(t *testing.T) {
 	if _, err := svc.Dispatch(context.Background(), entity.PluginRequest{Proto: 1, Command: "echo", Args: []string{"hi"}}); err != nil {
 		t.Fatalf("Dispatch 失败: %v", err)
 	}
-	if _, err := svc.Dispatch(context.Background(), entity.PluginRequest{Proto: 1, Command: "nope"}); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := svc.Dispatch(context.Background(), entity.PluginRequest{Proto: 1, Command: "nope"}); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("未知命令应返回 ErrNotFound，实际 %v", err)
 	}
 }
@@ -189,7 +188,7 @@ func TestHelpListEmpty(t *testing.T) {
 func TestHelpPluginUsage(t *testing.T) {
 	svc := newHelpSvc(t, "echo", "echo.exe", "回显演示", []string{"echo"}, func(ctx context.Context, req entity.PluginRequest) (entity.PluginResult, error) {
 		if req.Command != "help" {
-			return entity.PluginResult{}, domain.ErrNotFound
+			return entity.PluginResult{}, entity.ErrNotFound
 		}
 		return entity.PluginResult{Reply: &entity.Reply{Segments: []entity.Segment{{Kind: entity.SegmentKindText, Text: "echo 专属用法"}}}}, nil
 	})
@@ -202,7 +201,7 @@ func TestHelpPluginUsage(t *testing.T) {
 // TestHelpPluginFallback 插件不认 help 时回退到元数据描述 + 命令列表。
 func TestHelpPluginFallback(t *testing.T) {
 	svc := newHelpSvc(t, "echo", "echo.exe", "回显演示", []string{"echo"}, func(context.Context, entity.PluginRequest) (entity.PluginResult, error) {
-		return entity.PluginResult{}, domain.ErrNotFound
+		return entity.PluginResult{}, entity.ErrNotFound
 	})
 	text := svc.Help(context.Background(), entity.PluginRequest{Proto: 1, Command: "help", Args: []string{"echo"}})
 	for _, want := range []string{"echo", "回显演示", "/echo"} {
@@ -225,7 +224,7 @@ func TestHelpPluginNotFound(t *testing.T) {
 func TestHelpByCommandName(t *testing.T) {
 	svc := newHelpSvc(t, "demo", "demo.exe", "演示", []string{"ping"}, func(ctx context.Context, req entity.PluginRequest) (entity.PluginResult, error) {
 		if req.Command != "help" {
-			return entity.PluginResult{}, domain.ErrNotFound
+			return entity.PluginResult{}, entity.ErrNotFound
 		}
 		return entity.PluginResult{Reply: &entity.Reply{Segments: []entity.Segment{{Kind: entity.SegmentKindText, Text: "ping 用法"}}}}, nil
 	})

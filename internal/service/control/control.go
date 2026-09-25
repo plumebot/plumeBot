@@ -178,7 +178,7 @@ func (s *ControlService) resolveParams(ctx context.Context, groupID string) (str
 			mode = gc.Mode
 		}
 		return normalizeMode(mode), mergeOverrides(s.defaults, *gc), nil
-	case errors.Is(err, domain.ErrNotFound):
+	case errors.Is(err, entity.ErrNotFound):
 		// 群首次出现：快照当前全局生效值落一行（方案 A），供管理面编排与后续 per-group 微调。
 		// 建行是管理面副作用，失败不阻断判定——回复链路不应因配置行写入失败而中断，仅告警。
 		if uerr := s.store.UpsertGroupConfig(ctx, s.defaultGroupConfig(groupID)); uerr != nil {
@@ -335,7 +335,7 @@ func (s *ControlService) loadState(ctx context.Context, key string) (groupState,
 	var st groupState
 	bs, err := s.store.GetBotState(ctx, key)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, entity.ErrNotFound) {
 			return st, nil
 		}
 		return st, err

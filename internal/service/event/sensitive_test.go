@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 )
 
@@ -29,10 +28,10 @@ func TestSensitiveWordHit(t *testing.T) {
 	if err == nil {
 		t.Fatal("命中敏感词应返回错误")
 	}
-	if !errors.Is(err, domain.ErrSensitiveWord) {
+	if !errors.Is(err, entity.ErrSensitiveWord) {
 		t.Fatalf("errors.Is(err, ErrSensitiveWord) 不成立: %v", err)
 	}
-	var swErr *domain.SensitiveWordError
+	var swErr *entity.SensitiveWordError
 	if !errors.As(err, &swErr) || swErr.Word != "赌博" {
 		t.Fatalf("命中词应可经 errors.As 取出: %v", err)
 	}
@@ -76,7 +75,7 @@ func TestSensitiveWordEmptyWordsAlwaysPass(t *testing.T) {
 func TestSensitiveWordCaseInsensitive(t *testing.T) {
 	mw := sensitiveWordMiddleware(newSensitiveWordFilter([]string{"fuck"}))
 	err := mw(func(_ context.Context, _ entity.Message) error { return nil })(context.Background(), contentMsg("FUCK OFF"))
-	if !errors.Is(err, domain.ErrSensitiveWord) {
+	if !errors.Is(err, entity.ErrSensitiveWord) {
 		t.Fatalf("大小写变体应命中: %v", err)
 	}
 }

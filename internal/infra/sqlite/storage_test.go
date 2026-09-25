@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 )
 
@@ -120,7 +119,7 @@ func TestGetPersonaByAgent(t *testing.T) {
 	}
 
 	// 未命中 → ErrNotFound。
-	if _, err := s.GetPersonaByAgent(ctx, "不存在"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.GetPersonaByAgent(ctx, "不存在"); !errors.Is(err, entity.ErrNotFound) {
 		t.Errorf("应返回 ErrNotFound, 实际: %v", err)
 	}
 }
@@ -229,7 +228,7 @@ func TestGroupConfigRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// 未命中 → ErrNotFound。
-	if _, err := s.GetGroupConfig(ctx, "g1"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.GetGroupConfig(ctx, "g1"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("未配置群应返回 ErrNotFound, 实际: %v", err)
 	}
 

@@ -71,7 +71,7 @@ func (m *botGroupManager) Execute(ctx context.Context, action entity.GroupAction
 	// 护栏 1：per-group 开关（默认开；无配置行 = 开，0 = 显式关闭，
 	// 见 entity.GroupConfig.GroupMgmtEnabled 注释）。
 	cfg, err := m.store.GetGroupConfig(ctx, strconv.FormatInt(groupID, 10))
-	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+	if err != nil && !errors.Is(err, entity.ErrNotFound) {
 		l.Warn("群管理动作失败", append(baseFields, logger.Err(err))...)
 		return fmt.Errorf("查询群配置失败: %w", err)
 	}

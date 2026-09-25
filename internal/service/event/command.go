@@ -70,7 +70,7 @@ func (s *EventService) dispatchCommand(ctx context.Context, msg entity.Message) 
 				logger.From(ctx).Warn("插件群管理动作执行失败", logger.S("command", cmd), logger.Err(err))
 			}
 		}
-	case errors.Is(err, domain.ErrNotFound):
+	case errors.Is(err, entity.ErrNotFound):
 		// 未找到插件命令：命令消息已消费（防 confess 提示），记 Info 结局（架构 §17.4）。
 		logOutcome(ctx, msg, OutcomeCommandNotFound, logger.S("command", cmd))
 	default:

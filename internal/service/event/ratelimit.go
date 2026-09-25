@@ -8,7 +8,6 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/config"
 	"plumebot/pkg/logger"
@@ -41,7 +40,7 @@ func newRateLimiter(cfg config.RateLimitConfig) *rateLimiter {
 	}
 }
 
-// wait 为 msg 排队等待令牌。超时返回 domain.ErrRateLimited（已记结局行 rate_limited）。
+// wait 为 msg 排队等待令牌。超时返回 entity.ErrRateLimited（已记结局行 rate_limited）。
 func (r *rateLimiter) wait(ctx context.Context, msg entity.Message) error {
 	key := msg.SessionKey()
 	scope := "group"
@@ -69,13 +68,13 @@ func (r *rateLimiter) wait(ctx context.Context, msg entity.Message) error {
 		}
 		logOutcome(ctx, msg, OutcomeRateLimited,
 			logger.S("scope", scope), logger.S("max_wait", fmt.Sprintf("%ds", r.cfg.MaxWaitSeconds)))
-		return domain.ErrRateLimited
+		return entity.ErrRateLimited
 	}
 	return nil
 }
 
 // rateLimitMiddleware 为消息排队获取令牌：突发（burst 内）直通，
-// 超出后排队等待，超时则拦截并返回 domain.ErrRateLimited。
+// 超出后排队等待，超时则拦截并返回 entity.ErrRateLimited。
 func rateLimitMiddleware(rl *rateLimiter) Middleware {
 	return func(next Handler) Handler {
 		return func(ctx context.Context, msg entity.Message) error {

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 )
 
 func TestDecideReply(t *testing.T) {
@@ -13,8 +13,8 @@ func TestDecideReply(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"限流超时", domain.ErrRateLimited, rateLimitedReply},
-		{"敏感词命中", &domain.SensitiveWordError{Word: "敏感"}, sensitiveWordReply},
+		{"限流超时", entity.ErrRateLimited, rateLimitedReply},
+		{"敏感词命中", &entity.SensitiveWordError{Word: "敏感"}, sensitiveWordReply},
 		{"其他错误", errors.New("boom"), ""},
 		{"无错误", nil, ""},
 	}

@@ -10,7 +10,6 @@ import (
 	"sync"
 	"testing"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/internal/infra/sqlite"
 )
@@ -67,11 +66,11 @@ func TestUpsertGetDeleteListGroupConfig(t *testing.T) {
 	if err := svc.DeleteGroupConfig(ctx, "admin", "g1"); err != nil {
 		t.Fatalf("DeleteGroupConfig 失败: %v", err)
 	}
-	if _, err := svc.GetGroupConfig(ctx, "g1"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := svc.GetGroupConfig(ctx, "g1"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删除后应 ErrNotFound, 实际: %v", err)
 	}
 	// 删除不存在 → ErrNotFound。
-	if err := svc.DeleteGroupConfig(ctx, "admin", "g-nope"); !errors.Is(err, domain.ErrNotFound) {
+	if err := svc.DeleteGroupConfig(ctx, "admin", "g-nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删除不存在应 ErrNotFound, 实际: %v", err)
 	}
 
@@ -107,7 +106,7 @@ func TestValidateGroupConfig(t *testing.T) {
 		t.Errorf("合法时段应通过: %v", err)
 	}
 	// 校验失败不应落库（脏数据防入，fail-fast 纪律）。
-	if _, err := svc.GetGroupConfig(ctx, "g-bad"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := svc.GetGroupConfig(ctx, "g-bad"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("校验失败不应落库, 实际: %v", err)
 	}
 }
@@ -159,7 +158,7 @@ func TestUpsertDeleteGroupProfileInvalidate(t *testing.T) {
 		t.Fatalf("删后应失效缓存 g1, 实际 %d", inv.got("g1"))
 	}
 	// 删不存在 → ErrNotFound 且不触发失效（写库失败先返回）。
-	if err := svc.DeleteGroupProfile(ctx, "admin", "g-nope"); !errors.Is(err, domain.ErrNotFound) {
+	if err := svc.DeleteGroupProfile(ctx, "admin", "g-nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删不存在应 ErrNotFound, 实际: %v", err)
 	}
 	if inv.got("g-nope") != 0 {
@@ -199,7 +198,7 @@ func TestJargonAddConfirmListDelete(t *testing.T) {
 	if err := svc.DeleteJargon(ctx, "admin", "g1", "yyds"); err != nil {
 		t.Fatalf("DeleteJargon 失败: %v", err)
 	}
-	if err := svc.DeleteJargon(ctx, "admin", "g1", "nope"); !errors.Is(err, domain.ErrNotFound) {
+	if err := svc.DeleteJargon(ctx, "admin", "g1", "nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删不存在应 ErrNotFound, 实际: %v", err)
 	}
 
@@ -216,7 +215,7 @@ func TestJargonAddConfirmListDelete(t *testing.T) {
 		t.Fatalf("确认后应仅出现在 confirmed: %d/%d", len(confirmed), len(pending))
 	}
 	// Confirm 不存在 → ErrNotFound。
-	if _, err := svc.ConfirmJargon(ctx, "admin", "g2", "nope"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := svc.ConfirmJargon(ctx, "admin", "g2", "nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("确认不存在应 ErrNotFound, 实际: %v", err)
 	}
 	// 空黑话校验。
@@ -245,7 +244,7 @@ func TestMemberFactAddDelete(t *testing.T) {
 		t.Fatalf("应 trim 后落库: %v %+v", err, items)
 	}
 	// 删不存在 → ErrNotFound；存在 → 成功。
-	if err := svc.DeleteMemberFact(ctx, "admin", "g1", "u1", "nope"); !errors.Is(err, domain.ErrNotFound) {
+	if err := svc.DeleteMemberFact(ctx, "admin", "g1", "u1", "nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("删不存在应 ErrNotFound, 实际: %v", err)
 	}
 	if err := svc.DeleteMemberFact(ctx, "admin", "g1", "u1", "喜欢猫"); err != nil {
@@ -264,7 +263,7 @@ func TestGetBotStateReadOnly(t *testing.T) {
 	if err != nil || !strings.Contains(st.State, "energy") {
 		t.Fatalf("应能读运行态: %v %+v", err, st)
 	}
-	if _, err := svc.GetBotState(ctx, "g-nope"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := svc.GetBotState(ctx, "g-nope"); !errors.Is(err, entity.ErrNotFound) {
 		t.Fatalf("不存在应 ErrNotFound, 实际: %v", err)
 	}
 }

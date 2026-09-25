@@ -217,16 +217,16 @@ plumebot/
 │   └── bot/
 │       └── main.go                 # 唯一入口，组装依赖注入
 ├── internal/
-│   ├── domain/                     # 领域层：纯接口 + 实体 + 哨兵错误，零外部依赖
+│   ├── domain/                     # 领域层：纯接口 + 实体 + 哨兵错误（entity 子包承载），零外部依赖
 │   │   ├── entity/                 #   公共实体（Message, Event, Profile...）
+│   │   │   └── errors.go           #     哨兵错误 + 参数化错误（SensitiveWordError / ValidationError）
 │   │   ├── agent.go                #   Agent 接口（P2-004 由 infra/ai 实现）
 │   │   ├── memory.go               #   Memory 接口（P3-001 由 service/memory 实现）
 │   │   ├── plugin.go               #   Plugin 接口（stub）
 │   │   ├── storage.go              #   Storage 接口（P2-001 已实现）
 │   │   ├── control.go              #   Control 接口（P5-001/002 由 service/control 实现）
 │   │   ├── sender.go               #   Sender 接口 + WithSender/SenderFrom（B-003，由 infra/onebot 实现）
-│   │   ├── log.go                  #   LogReader 接口（P7-002 由 infra/logfile 实现；查询条件/结果为 entity.LogQuery/LogPage）
-│   │   └── errors.go               #   哨兵错误 + 参数化错误（SensitiveWordError）
+│   │   └── log.go                  #   LogReader 接口（P7-002 由 infra/logfile 实现；查询条件/结果为 entity.LogQuery/LogPage）
 │   ├── service/                    # 业务编排层，依赖 domain 接口
 │   │   ├── event/                  #   中间件链：日志 → 限流 → 敏感词 → 持久化(tail)
 │   │   │   ├── event.go            #     EventService，HandleMessage 走链
@@ -276,7 +276,7 @@ plumebot/
 
 - 定义所有业务接口；
 - 定义公共实体（Entity）；
-- 定义哨兵错误（errors.go）。
+- 定义哨兵错误（entity/errors.go）。
 
 禁止：
 
@@ -367,7 +367,7 @@ domain 零依赖
 
 - 全部业务接口定义；
 - 公共实体定义；
-- 哨兵错误定义。
+- 哨兵错误定义（entity/errors.go）。
 
 禁止：
 
@@ -382,7 +382,7 @@ domain 零依赖
 
 关键约定：
 
-- `HandleMessage(ctx, msg) error`，中间件命中返回哨兵错误（`domain.ErrRateLimited` / `domain.SensitiveWordError`）；
+- `HandleMessage(ctx, msg) error`，中间件命中返回哨兵错误（`entity.ErrRateLimited` / `entity.SensitiveWordError`）；
 - 限流：`golang.org/x/time/rate` 令牌桶，按群（私聊按用户）独立，超时返回 `ErrRateLimited`；
 - 敏感词：`pkg/ahocorasick` 匹配，空词表 = 不过滤；
 - 日志规范（完整版见架构 §17 日志规范）：消息日志为**两条锚点**——入口行 `Info("收到消息", message_id, group_id, user_id, message_type, content, mentioned)` + 结局行 `logOutcome(ctx, msg, outcome…)`（`Info|Warn("消息结局", …, outcome)`，每条消息**恰好**一入口一结局）；日志不重复（infra/onebot 不再打消息 Info；群管理审计只落 `GroupManager.Execute`；发送成功只 Debug；详情作结局行字段）；结局 outcome 枚举与级别见架构 §17.4；等级语义见 §17.3；输出形态见 §17.1（按精确级别分文件 debug/info/warn/error + fatal.log + gin.log，仅文件不写终端，lumberjack 10MB 滚动）；审计与敏感信息（密钥/token/密码绝不入日志）见 §17.5；**trace_id 经 `logger.Context/From` 注入 ctx**（管理端=IP、QQ=group:/private: 会话键，见 §17.6），入口行/结局行/审计/模型度量经 `logger.From(ctx)` 输出以便按会话检索；代码落地状态见 roadmap B-046 与 P7-002（均已落地）；
@@ -414,7 +414,7 @@ domain 零依赖
 
 - 若包含 SQL 操作：`queries.go` — 所有 DML 语句以包级 `const` 存放，方法体内不内嵌 SQL 字面量；DDL 语句存放于 `migrations/*.sql` 通过 `//go:embed` 加载。
 
-哨兵错误定义在 `internal/domain/errors.go`，infra 层引用 `domain.ErrXxx` 返回，供上层 service 通过 `errors.Is` 判断，避免上层耦合数据库驱动。
+哨兵错误定义在 `internal/domain/entity/errors.go`，infra 层引用 `entity.ErrXxx` 返回，供上层 service 通过 `errors.Is` 判断，避免上层耦合数据库驱动。
 
 ### 6.6 pkg/config/
 
@@ -436,7 +436,7 @@ domain 零依赖
 6. 不提前实现任何业务逻辑（对照 roadmap 阶段禁令）。
 7. 不接入阶段外外部服务。
 8. 不为了"架构完整"创建大量空类和方法，只创建架构文档中明确列出的模块。
-9. 哨兵错误定义在 `internal/domain/errors.go`：`ErrNotFound`、`ErrConflict`、`ErrClosed`、`ErrRateLimited`、`ErrSensitiveWord`。参数化错误（如 `SensitiveWordError{Word}`）实现 `Unwrap()` 指向哨兵，上层用 `errors.Is` 判断，禁止在 infra 包内自定义哨兵。
+9. 哨兵错误定义在 `internal/domain/entity/errors.go`（运行期哨兵与管理面校验错误 `ValidationError`/`ErrAlreadyRegistered` 等集中于此）：`ErrNotFound`、`ErrConflict`、`ErrClosed`、`ErrRateLimited`、`ErrSensitiveWord`。参数化错误（如 `SensitiveWordError{Word}`）实现 `Unwrap()` 指向哨兵，上层用 `errors.Is` 判断，禁止在 infra 包内自定义哨兵。
 10. infra 包中 SQL DML 语句不得内嵌在方法体内，必须提取到 `queries.go` 作为包级 `const`；DDL 语句存放于 `migrations/*.sql` 通过 `//go:embed` 加载。
 11. 代码保持直接、易读，不引入不必要的抽象层。
 12. 配置空值兜底放在消费方（默认值集中下沉），pkg/config 不改写字段。

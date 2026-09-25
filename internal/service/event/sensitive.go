@@ -3,7 +3,6 @@ package event
 import (
 	"context"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/ahocorasick"
 	"plumebot/pkg/logger"
@@ -20,7 +19,7 @@ func newSensitiveWordFilter(words []string) *sensitiveWordFilter {
 }
 
 // sensitiveWordMiddleware 是敏感词过滤中间件：
-// 命中 → 结局行 sensitive（含命中词）→ 返回 *domain.SensitiveWordError，
+// 命中 → 结局行 sensitive（含命中词）→ 返回 *entity.SensitiveWordError，
 // 由连接层识别后回复固定文案；未命中 → 放行给 next。
 func sensitiveWordMiddleware(filter *sensitiveWordFilter) Middleware {
 	return func(next Handler) Handler {
@@ -30,7 +29,7 @@ func sensitiveWordMiddleware(filter *sensitiveWordFilter) Middleware {
 				return next(ctx, msg)
 			}
 			logOutcome(ctx, msg, OutcomeSensitive, logger.S("word", word))
-			return &domain.SensitiveWordError{Word: word}
+			return &entity.SensitiveWordError{Word: word}
 		}
 	}
 }

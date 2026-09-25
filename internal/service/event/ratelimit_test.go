@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"plumebot/internal/domain"
 	"plumebot/internal/domain/entity"
 	"plumebot/pkg/config"
 )
@@ -45,8 +44,8 @@ func TestRateLimiterTimeoutReturnsSentinel(t *testing.T) {
 		t.Fatalf("第 1 条应直通: %v", err)
 	}
 	err := rl.wait(context.Background(), groupMsg("m2"))
-	if !errors.Is(err, domain.ErrRateLimited) {
-		t.Fatalf("超时应返回 domain.ErrRateLimited，实际: %v", err)
+	if !errors.Is(err, entity.ErrRateLimited) {
+		t.Fatalf("超时应返回 entity.ErrRateLimited，实际: %v", err)
 	}
 }
 
@@ -77,7 +76,7 @@ func TestRateLimitMiddlewareStopsChainOnTimeout(t *testing.T) {
 		return nil
 	})
 	err := h(context.Background(), groupMsg("m2"))
-	if !errors.Is(err, domain.ErrRateLimited) {
+	if !errors.Is(err, entity.ErrRateLimited) {
 		t.Fatalf("应返回 ErrRateLimited，实际: %v", err)
 	}
 	if called {

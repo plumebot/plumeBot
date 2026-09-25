@@ -27,12 +27,12 @@ func (t *tailStore) SaveMessage(_ context.Context, msg entity.Message) error {
 }
 
 func (t *tailStore) GetGroupProfile(_ context.Context, _ string) (*entity.GroupProfile, error) {
-	return nil, domain.ErrNotFound
+	return nil, entity.ErrNotFound
 }
 
 // BuildMessages 查询桩：persona 未命中（走兜底 defaultPersona）、无黑话、无成员事实。
 func (t *tailStore) GetPersonaByAgent(_ context.Context, _ string) (*entity.Persona, error) {
-	return nil, domain.ErrNotFound
+	return nil, entity.ErrNotFound
 }
 
 func (t *tailStore) ListConfirmedJargon(_ context.Context, _ string) ([]string, error) {

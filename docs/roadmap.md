@@ -46,7 +46,7 @@
 | P2-003 | 消息管线中间件 | 实现中间件链（日志 → 限流 → 敏感词过滤），在 event service 中编织 | P0 | service/event | P2-002 完成 | 每条消息有日志输出；限流超限丢弃；敏感词命中拦截且记录 | ✅ |
 | P2-004 | eino Agent 接入 | 实现 domain.Agent 接口，封装 eino ChatModelAgent，支持 tool calling | P0 | infra/ai | P1 全部完成 | 传入简单 prompt 可收到 LLM 文本回复 | ✅ |
 
-> 附加交付（P2-003 里程碑内）：敏感词实装为 Aho-Corasick 自动机（`pkg/ahocorasick`，大小写不敏感、返回最早命中词且保留配置原大小写）；敏感词经 `middleware.sensitive_words` 配置；命中返回 `domain.ErrSensitiveWord`（携带命中词），连接层回复「我拒绝回答」。
+> 附加交付（P2-003 里程碑内）：敏感词实装为 Aho-Corasick 自动机（`pkg/ahocorasick`，大小写不敏感、返回最早命中词且保留配置原大小写）；敏感词经 `middleware.sensitive_words` 配置；命中返回 `entity.ErrSensitiveWord`（携带命中词），连接层回复「我拒绝回答」。
 
 ---
 

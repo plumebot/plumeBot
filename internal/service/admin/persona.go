@@ -13,7 +13,7 @@ func (s *Service) ListPersonas(ctx context.Context) ([]entity.Persona, error) {
 	return s.store.ListPersonas(ctx)
 }
 
-// GetPersonaByAgent 按 agent 查询人格模板；不存在时返回 domain.ErrNotFound。
+// GetPersonaByAgent 按 agent 查询人格模板；不存在时返回 entity.ErrNotFound。
 func (s *Service) GetPersonaByAgent(ctx context.Context, agent string) (*entity.Persona, error) {
 	return s.store.GetPersonaByAgent(ctx, agent)
 }

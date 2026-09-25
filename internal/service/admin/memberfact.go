@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"plumebot/internal/domain"
+	"plumebot/internal/domain/entity"
 )
 
 // ListMemberFacts 列出指定群/用户的事实（私聊 group_id 空 = 该用户私聊事实）。
@@ -28,14 +28,14 @@ func (s *Service) AddMemberFact(ctx context.Context, by, groupID, userID, fact s
 	return nil
 }
 
-// DeleteMemberFact 删除单条事实（纠错主场景）；先查证存在（决策 D7），不存在返回 domain.ErrNotFound。
+// DeleteMemberFact 删除单条事实（纠错主场景）；先查证存在（决策 D7），不存在返回 entity.ErrNotFound。
 func (s *Service) DeleteMemberFact(ctx context.Context, by, groupID, userID, fact string) error {
 	items, err := s.store.ListMemberFacts(ctx, groupID, userID)
 	if err != nil {
 		return err
 	}
 	if !slices.Contains(items, fact) {
-		return domain.ErrNotFound
+		return entity.ErrNotFound
 	}
 	if err := s.store.DeleteMemberFact(ctx, groupID, userID, fact); err != nil {
 		return err
