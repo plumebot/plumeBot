@@ -58,7 +58,7 @@ for {
 ## 3. ChatModelAgentConfig 字段（v0.8.13）
 
 | 字段 | 类型 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | `Name` / `Description` | string | 子 agent 场景必填，独立运行可空 |
 | `Instruction` | string | 系统提示词；**本项目留空**（system 在消息列表里） |
 | `Model` | `model.BaseChatModel` | Generate + Stream；配工具时需支持 `model.WithTools` option |
@@ -150,7 +150,7 @@ m, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 ## 8. 冒烟结论（spike_test.go）
 
 | 用例 | 结果 |
-|---|---|
+| --- | --- |
 | 文本：system+user → 最终文本；模型收到的消息 system 在前 | PASS |
 | 图片 URL part 透传 | PASS |
 | 图片 base64 part 透传 | PASS |
@@ -165,6 +165,6 @@ m, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 
 ## 9. 参考 URL
 
-- eino 仓库：https://github.com/cloudwego/eino （tag v0.8.13）
-- eino-ext openai 示例（generate_with_image）：https://github.com/cloudwego/eino-ext/tree/main/components/model/openai/examples
-- eino-contrib/jsonschema：https://github.com/eino-contrib/jsonschema （v1.0.3）
+- eino 仓库：[https://github.com/cloudwego/eino](https://github.com/cloudwego/eino) （tag v0.8.13）
+- eino-ext openai 示例（generate_with_image）：[https://github.com/cloudwego/eino-ext/tree/main/components/model/openai/examples](https://github.com/cloudwego/eino-ext/tree/main/components/model/openai/examples)
+- eino-contrib/jsonschema：[https://github.com/eino-contrib/jsonschema](https://github.com/eino-contrib/jsonschema) （v1.0.3）

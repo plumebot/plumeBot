@@ -28,7 +28,7 @@
 ### 2.1 SQLite DB 配置清单（可管理对象）
 
 | 表 | 字段摘要 | 运行时消费方 | 生效机制 | 是否管理面可改 |
-|----|----------|--------------|----------|:---:|
+| ---- | ---------- | -------------- | ---------- | :---: |
 | `group_config` | `mode` + 10 状态规则参数 + `group_mgmt_enabled` | `service/control.ShouldReply` 每条非 @ 群消息现查 `GetGroupConfig`（**无缓存**，B-036 定案）；群首次被触达时由 `resolveParams` 自动落一行默认配置（快照全局生效值，见 §7.2） | **改库即时生效** | ✅ 核心 |
 | `persona` | `agent`(UNIQUE) + `name` + `system_prompt` | `service/memory.BuildMessages` 每次组装现查 `GetPersonaByAgent` | **改库即时生效**（P6-001） | ✅ 核心 |
 | `group_profile` | `culture/topics/active_hours/rules/atmosphere` | `BuildMessages` 经 `memory.GetGroupProfile` | 走 `ProfileCache` 内存缓存，**无淘汰/失效出口**（`service/memory/profile.go` 只增不删，B-004） | ✅ 但需**缓存失效** |
@@ -43,6 +43,7 @@
 `cfg` 在启动时装载并按值注入各构造函数：`control.state` 全局默认（`NewControlService`）、中间件敏感词 AC 表
 （`NewEventService`）、`llm.prompt` 组装预算（`BuilderConfig`）、LLM 模型条目（`NewAgent/NewSummarizer`）、
 `agent` 三段等。**运行时没有热更新机制**——任何这类字段变更都需要：
+
 - 改 `config.yaml` + 重启（现状，最简单），或
 - 后续引入「动态配置源」机制（大改，不在本期）。
 
@@ -89,7 +90,7 @@
 
 ### 4.1 分层与新增包
 
-```
+```markdown
 cmd/bot/main.go
   │             组装注入 + port 探测递增
   ▼
@@ -118,7 +119,7 @@ web 前端                     handler/web/static（embedded，无额外依赖�
 
 ### 4.2 依赖方向（遵守 CLAUDE.md §5.5）
 
-```
+```markdown
 cmd → handler/web ──(domain.Admin 接口)──→ service/admin → domain(Storage/entity)
                         │
                         └→ service/memory（仅用于 group_profile 缓存失效；service→service 依赖有先例：event→memory）
@@ -144,7 +145,7 @@ cmd → handler/web ──(domain.Admin 接口)──→ service/admin → domai
 ### 5.1 新增 Storage 方法（定案 E：直接扩展 Storage，不另起 AdminStore）
 
 | 方法 | 理由 |
-|------|------|
+| ------ | ------ |
 | `ListGroupConfigs(ctx) ([]entity.GroupConfig, error)` | 管理面「列出所有群配置」（当前仅单 PK 查询） |
 | `DeleteGroupConfig(ctx, groupID string) error` | 删除配置行 = 恢复全局兜底（当前无删除路径） |
 | `ListPersonas(ctx) ([]entity.Persona, error)` | 人格列表 |
@@ -214,6 +215,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 
   HTTP 状态承担传输语义，`code` 承担业务码（0 成功；4001 参数错误、4011 未认证/凭证错误、4031 无权限、
   4041 不存在、4091 冲突、5000 内部错误），`message` 供前端直接展示（中文）。
+
 - **写操作返回**：更新后的资源（`data` 为最新状态），客户端立即同步。
 - **删操作返回**：`{"code":0,"message":"ok"}`；目标不存在返回 `4041`。
 - **校验纪律**：管理 API **fail-fast 拒绝非法输入**（与运行期 `mergeOverrides`「非法保留默认」的容错语义不同
@@ -229,7 +231,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 ### 7.1 鉴权与账号
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
-|------|------|------|------|------|
+| ------ | ------ | ------ | ------ | ------ |
 | POST | `/api/v1/auth/register` | `{"username":"...","password":"..."}` | `{"token":"<JWT>","token_type":"Bearer","expires_at":1740000000}` | **首个管理员注册（免鉴权，定案 J）**：仅当 `ListAdminUsers` 空表时放行并创建首账号，成功即发 token；已存在管理员 → 4031；用户名冲突 → 4091 |
 | POST | `/api/v1/auth/login` | `{"username":"...","password":"..."}` | `{"token":"<JWT>","token_type":"Bearer","expires_at":1740000000}` | bcrypt 校验 `admin_user`；失败 4011「用户名或密码错误」（不区分具体项，防探测） |
 | PUT | `/api/v1/auth/password` | `{"old_password":"...","new_password":"..."}` | — | **已鉴权**；先验旧码再更新散列（`UpdateAdminUserPassword`） |
@@ -242,7 +244,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 ### 7.2 `group_config` — 每群触发/状态配置（核心）
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
-|------|------|------|------|------|
+| ------ | ------ | ------ | ------ | ------ |
 | GET | `/api/v1/groups/{group_id}/config` | — | 单群配置 + `"configured": bool` | 未配置行返回 **200 + 全零/空字段 + `configured:false`**（不返回 404）。经 bot 触达过的群已有自动建行 → `configured:true`；`false` 仅表示**该群尚未被 bot 触达** |
 | PUT | `/api/v1/groups/{group_id}/config` | 全字段 `GroupConfig` JSON | 更新后的配置 | **整行 upsert**（幂等）；0/空列=走全局；`configured` 恒 true |
 | DELETE | `/api/v1/groups/{group_id}/config` | — | — | 删行 → 恢复全局兜底（不存在 4041）；**该群下次被 bot 触达时会按当时的全局生效值重新自动建行**（见下方说明，非持久） |
@@ -274,7 +276,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 ### 7.3 `persona` — 人格模板（改即生效）
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
-|------|------|------|------|------|
+| ------ | ------ | ------ | ------ | ------ |
 | GET | `/api/v1/personas` | — | `{"items":[{agent,name,system_prompt}...]}` | 所有 agent 模板 |
 | GET | `/api/v1/personas/{agent}` | — | 单条 | 不存在 4041 |
 | PUT | `/api/v1/personas/{agent}` | `{"name":"...","system_prompt":"..."}` | 更新后单条 | `UpsertPersona` 按 agent 幂等；**即时生效（下一条消息起）** |
@@ -284,7 +286,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 ### 7.4 `group_profile` — 群画像（写后需缓存失效）
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
-|------|------|------|------|------|
+| ------ | ------ | ------ | ------ | ------ |
 | GET | `/api/v1/groups/{group_id}/profile` | — | 单群画像 | 无画像返回零值 + `configured:false`（形态同 7.2；但 **profile 不自动建行**，故该态长期可达，不受 §7.2 自动建行影响） |
 | PUT | `/api/v1/groups/{group_id}/profile` | `{"culture","topics":[],"active_hours","rules":[],"atmosphere":[]}` | 更新后画像 | UpsertGroupProfile **后调 `MemoryService.InvalidateGroupProfile(groupID)`** |
 | DELETE | `/api/v1/groups/{group_id}/profile` | — | — | **定案 F：做**。`DeleteGroupProfile` + **同样失效缓存**（不存在 4041） |
@@ -297,7 +299,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 ### 7.5 `group_jargon` — 黑话（审核流）
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
-|------|------|------|------|------|
+| ------ | ------ | ------ | ------ | ------ |
 | GET | `/api/v1/groups/{group_id}/jargons?status=all\|pending\|confirmed` | — | `{"items":[{jargon,status}...]}` | 默认 `all`；用 `ListJargonWithStatus` |
 | POST | `/api/v1/groups/{group_id}/jargons` | `{"jargon":"..."}` | 新条目 | 添加；**定案 F：Admin 添加直接 status='confirmed'**（人工添加即人工认可，写入即注入 prompt） |
 | DELETE | `/api/v1/groups/{group_id}/jargons/{jargon}` | — | — | 删除（不存在 4041）；撤销错误学习/错误确认 |
@@ -309,7 +311,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 ### 7.6 `member_facts` — 成员事实（纠错）
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
-|------|------|------|------|------|
+| ------ | ------ | ------ | ------ | ------ |
 | GET | `/api/v1/member-facts?group_id=&user_id=` | — | `{"items":["..."]}` | 私聊场景 `group_id` 空即查该用户私聊事实 |
 | POST | `/api/v1/member-facts` | `{"group_id":"","user_id":"","fact":"..."}` | 新条目 | 管理员补记/纠错（正常写者仍是 Agent 的 store_fact） |
 | DELETE | `/api/v1/member-facts?group_id=&user_id=&fact=` | — | — | 删除单条（纠错主场景：Agent 记错的事实） |
@@ -319,7 +321,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 ### 7.7 `bot_state` — 运行态（**定案：只读端点纳入**）
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
-|------|------|------|------|------|
+| ------ | ------ | ------ | ------ | ------ |
 | GET | `/api/v1/sessions/{session_key}/state` | — | `{"group_id","state":{...}}` | 只读展示精力/冷却/连续/rest；**不提供写入** |
 
 - `state` 为 `bot_state.state` 原样 JSON（`groupState` 字段：energy / energy_updated_at / last_reply_at /
@@ -329,7 +331,7 @@ CREATE TABLE IF NOT EXISTS admin_user (
 ### 7.8 会话窗口与摘要纪要（P7-003，只读）
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
-|------|------|------|------|------|
+| ------ | ------ | ------ | ------ | ------ |
 | GET | `/api/v1/sessions` | — | `{"items":[{"key","count","last_ts","last_render"}]}` | 活跃会话下拉（`domain.Memory.ListSessions`，按键升序） |
 | GET | `/api/v1/sessions/{session_key}/window` | — | `{"items":[...],"summaries":[...]}` | 窗口消息（时间正序）+ 摘要热链（旧→新）一并返回 |
 
@@ -459,7 +461,7 @@ admin:
 ## 13. 决策记录（已全部定案）
 
 | 项 | 问题 | 定案 |
-|----|------|------|
+| ---- | ------ | ------ |
 | A | service 划分 | **单 `service/admin`** |
 | B | GET 是否返回生效值（合并全局兜底） | 本期只返回**存储值**，生效值由 bot 侧合并 |
 | C | JWT 实现 | **`github.com/golang-jwt/jwt/v5`**（HS256） |

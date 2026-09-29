@@ -17,7 +17,7 @@
 ## 2. 技术选型
 
 | 层 | 选型 | 说明 |
-|----|------|------|
+| ---- | ------ | ------ |
 | OneBot 连接层 | ZeroBot | Go 生态 OneBot v11 框架 |
 | Agent 引擎 | eino (CloudWeGo) | 字节跳动开源 AI Agent 框架，支持 ChatModelAgent / DeepAgent / Compose |
 | 存储 | SQLite + modernc.org/sqlite | 纯 Go 驱动，无 cgo |
@@ -35,7 +35,7 @@
 
 ## 3. 整体架构
 
-```
+```markdown
 NapCat (QQ登录)
    │ OneBot WebSocket
    ▼
@@ -157,7 +157,7 @@ Agent 通过 eino Tool 机制驱动记忆更新，在对话中自行判断何时
 
 ## 6. Prompt 组装顺序
 
-```
+```markdown
 ┌──────────────────────┐
 │ ① 系统人格            │  persona 模板的 system_prompt（按 agent 名加载），定义"你是谁"
 ├──────────────────────┤
@@ -235,7 +235,7 @@ P6-001 起：`service/memory BuildMessages` 每次组装按 `cfg.Agent.Name` 现
 ### 8.1 插件形态（单一形态：子进程）
 
 | 形态 | 说明 | 优先级 |
-|------|------|:---:|
+| ------ | ------ | :---: |
 | 子进程 stdio | 插件为独立进程，主程序经 stdio 通信；跨平台、进程隔离、真热重载（重启子进程） | 主方案 |
 
 > 实现选型（P4-002 定案，P6-004 更新）：**HashiCorp go-plugin，net/rpc 变体**——握手/版本协商/崩溃检测/热重载齐全，
@@ -294,7 +294,7 @@ P6-001 起：`service/memory BuildMessages` 每次组装按 `cfg.Agent.Name` 现
 ### 9.1 触发模式
 
 | 模式 | 说明 |
-|------|------|
+| ------ | ------ |
 | mention | 仅被 @ 或私聊时回复；所有消息仍流入窗口和 SQLite，被 @ 时上下文完整 |
 | auto | @ 和私聊一定回复；普通消息由 Agent 自主判断是否加入 |
 
@@ -305,7 +305,7 @@ P6-001 起：`service/memory BuildMessages` 每次组装按 `cfg.Agent.Name` 现
 bot 在每个群维护独立状态，纯规则驱动：
 
 | 规则 | 说明 |
-|------|------|
+| ------ | ------ |
 | 精力值 | 每次回复消耗，随时间恢复。低于阈值不主动说话（@ 除外） |
 | 连续回复上限 | 连续说了 N 句后强制休息 |
 | 冷却时间 | 两次主动回复之间最小间隔 |
@@ -327,7 +327,7 @@ per-group `group_config` 列（非 0/非空）→ 全局 `cfg.Control.state` →
 管理面 DELETE 删行后，该群下一条消息会按当时的全局值重新建行（非持久）。
 
 | 参数 | 全局默认 | 说明 |
-|------|---------|------|
+| ------ | --------- | ------ |
 | `energy_max` | 100 | 精力上限 |
 | `energy_cost` | 10 | 每次回复消耗 |
 | `energy_recover` | 5/分钟 | 精力恢复（惰性计算，读时按整分钟增益，不跑定时器） |
@@ -355,7 +355,7 @@ per-group `group_config` 列（非 0/非空）→ 全局 `cfg.Control.state` →
 ### 10.1 事件分类
 
 | 事件类型 | 处理策略 | 进入 Agent 上下文 |
-|------|------|:---:|
+| ------ | ------ | :---: |
 | 消息事件 (group/private) | 核心管线（命令分发 / Agent 决策） | ✅ |
 | 通知事件 (群增减/戳一戳/禁言) | 规则引擎处理，插件可订阅扩展 | ❌ |
 | 请求事件 (加好友/加群) | 规则引擎（自动通过/拒绝策略） | ❌ |
@@ -365,7 +365,7 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 
 ### 10.2 消息管线
 
-```
+```markdown
 消息进入
   │
   ├── [1. 日志]         所有消息先落日志，包括后续被拦截的
@@ -388,7 +388,7 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 
 ### 10.3 通知管线（规则处理）
 
-```
+```markdown
 通知进入
   ├── 群成员增加 → 更新群信息 + 发规则欢迎语（不走 Agent）
   ├── 群成员减少 → 更新群信息
@@ -406,7 +406,7 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 ### 11.1 数据库表概要
 
 | 表 | 说明 |
-|----|------|
+| ---- | ------ |
 | messages | 全量群聊消息存储，按 chat_id+时间索引，供关键词检索（后续可扩展向量检索） |
 | conversation_summary | 归档摘要（会话键 chat_id + seq 唯一，重启回灌热链底，见 §4.1） |
 | group_profile | 群画像（1群1条） |
@@ -445,7 +445,7 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 ## 13. 参考项目
 
 | 项目 | Stars | 定位 | 可参考点 |
-|------|-------|------|---------|
+| ------ | ------- | ------ | --------- |
 | [MumuBot](https://github.com/SugarMGP/MumuBot) | 20 | Go + eino + NapCat 的赛博群友 | 架构设计、eino 集成、记忆/情绪/画像系统 |
 | [ZeroBot](https://github.com/wdvxdr1123/ZeroBot) | 398 | Go OneBot v11 框架 | OneBot 连接层实现 |
 | [ZeroBot-Plugin](https://github.com/FloatTech/ZeroBot-Plugin) | 2.6k | ZeroBot 插件合集 | 插件参考、OneBot API 使用方式 |
@@ -459,7 +459,7 @@ Agent 上下文窗口仅保留消息事件，通知/请求/元事件不污染对
 
 参照 DDD 分层，接口驱动，模块可独立开发与替换。
 
-```
+```markdown
 cmd/                                # 入口，组装依赖注入
 internal/
   domain/                           # 领域层：纯接口 + 实体，零外部依赖
@@ -490,7 +490,7 @@ data/                               # SQLite 自动生成
 
 ### 14.2 依赖方向
 
-```
+```markdown
 cmd ──→ handler ──→ service ──→ domain (接口)
                       │
                       └──→ infra (编译时注入)
@@ -555,7 +555,7 @@ AI 自主群管理（禁言/踢人/改名片等）经 agent tool 触发，不走
 
 ### 14.3 启动流程
 
-```
+```markdown
 main()
   ├── 1. load config.yaml
   ├── 2. infra/sqlite.Init()         → 建表 + 默认人格模板 seed
@@ -572,7 +572,7 @@ main()
 
 ### 14.4 消息链路
 
-```
+```markdown
 NapCat → OneBot WS → ZeroBot
   │
   ├── middleware: 日志 → 限流 → 敏感词
@@ -645,7 +645,7 @@ Ctrl+C 直接终止进程（防卡死）。
 - 按**精确级别分文件**（`levelGate` 只收该精确级别，不是 ≥ 聚合）：
 
 | 文件 | 记录 | 备注 |
-|---|---|---|
+| --- | --- | --- |
 | `debug.log` | 仅 Debug | 高频细节（窗口/画像/压缩跳过/发送成功/元事件） |
 | `info.log` | 仅 Info | 消息入口 + 结局账本 + 模型调用 + 写操作审计 + 启动里程碑 |
 | `warn.log` | 仅 Warn | 被拦截 / 各环节失败 / 护栏拒绝 / 429 / 401 |
@@ -659,7 +659,7 @@ Ctrl+C 直接终止进程（防卡死）。
 ### 17.2 分层记录与防重复
 
 | 层 | 记录什么 | 不记录什么 |
-|---|---|---|
+| --- | --- | --- |
 | pkg/logger | 唯一输出形态 + gin.log / fatal.log 写入器 | 业务细节 |
 | infra/onebot | 事件转换失败、通知事件、连接状态、消息处理异常、固定文案发送结果 | 消息 Info（由 service/event 统一，连接层不重复） |
 | handler | 空（纯胶水透传） | 一切 |
@@ -682,7 +682,7 @@ Ctrl+C 直接终止进程（防卡死）。
 ### 17.3 等级语义
 
 | 级别 | 语义 | 典型位置 |
-|---|---|---|
+| --- | --- | --- |
 | Debug | 高频细节 | 窗口操作、画像缓存命中/失效、压缩跳过/冷却、发送成功、元事件 |
 | Info | 正常业务里程碑 | 消息入口、结局（正常）、命令成功、模型调用、压缩成功、sqlite 打开/迁移、config 模板写入/env 覆盖、jwt 生成、写操作审计 |
 | Warn | 可恢复问题 / 被拦截 | 限流丢弃、敏感词拦截、各环节失败、群管理护栏拒绝/API 失败、429/401、改密失败 |
@@ -702,7 +702,7 @@ Ctrl+C 直接终止进程（防卡死）。
 - 结局 `outcome` 枚举：
 
 | outcome | 级别 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | `agent_replied` | Info | 触发并发送成功（带 reason：auto / mention_forced） |
 | `command` / `command_not_found` | Info | 插件命令分支（含 /help）；未找到也算已消费 |
 | `not_triggered` | Info | 触发判断不回复（带 reason） |
@@ -732,7 +732,7 @@ Ctrl+C 直接终止进程（防卡死）。
 **trace_id 注入机制**（`pkg/logger` 提供，任何层可用，不依赖 service/admin）：
 
 | 来源 | trace_id 取值 | 注入点 |
-|---|---|---|
+| --- | --- | --- |
 | 管理端 HTTP 请求 | 客户端 IP（原值） | `handler/web.withClientIP`：`logger.Context(ctx, S("trace_id", ip))` |
 | QQ 群消息 | `group:<群号>` | `infra/onebot` matcher 闭包构造事件 ctx 时注入 |
 | QQ 私聊消息 | `private:<对方QQ号>` | 同上 |
@@ -755,7 +755,7 @@ Ctrl+C 直接终止进程（防卡死）。
 **接口契约**（`GET /api/v1/logs`，已鉴权 + 每 IP 限流）：
 
 | 参数 | 说明 |
-|---|---|
+| --- | --- |
 | `levels` | csv：`info,warn,error,debug`；缺省 = 全部；**`error` 语义含 `fatal.log`**（fatal 并入错误展示） |
 | `trace_id` | 精确匹配 |
 | `begin` / `end` | RFC3339，可缺省 |

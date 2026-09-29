@@ -8,21 +8,42 @@
 
 # PlumeBot
 
-*PlumeBot — an AI-driven "cyber community member" for QQ.*
+```markdown
+NapCat (QQ 登录)
+   │ OneBot WebSocket
+   ▼
+ZeroBot 连接层
+   │
+   ▼
+中间件链：日志 → 限流 → 敏感词 → 持久化(窗口+SQLite)
+   │                    │
+   ▼                    ▼
+插件分发(/命令)      触发判断(mention/auto + 状态规则)
+                        │
+                        ▼
+                 Prompt 五段组装 → eino Agent 推理 ⇄ 记忆工具
+                        │
+                        ▼
+                 Sender 发送 → 窗口追加 + OnReplied 记账
+```
 
-PlumeBot is not a command robot. Built on the [OneBot v11](https://github.com/botuniverse/onebot-11) protocol and [NapCat](https://github.com/NapNeko/NapCatQQ), it lives in your group as a member with **memory, personality and restraint**: it eavesdrops on the conversation, remembers facts about people and groups, decides *when* to speak, and guards its own privileges.
+```markdown
+cmd ──→ handler ──→ service ──→ domain（接口）
+                      │
+                      └──→ infra（编译时注入）
 
 Written in Go. Ships as a single static binary with no cgo — no service dependencies other than NapCat.
 
 ## Features
 
-- **Three-tier memory** — an in-memory context window (20 → 100 rounds); old context compressed by the LLM into summaries (level-1 compress, level-2 merge, FIFO eviction, archived to SQLite and reloaded on restart); plus long-term *member facts* and *group jargon* that the agent reads and writes itself via tool calling.
-- **Personality as data** — persona templates live in SQLite and take effect from the very next message. No restart, no config-file juggling.
-- **Human-like restraint** — `mention` / `auto` trigger modes plus a pure-rule state machine (energy, cooldown, consecutive-reply cap, quiet hours, short-message skip) so it never floods the group.
-- **Multi-modal perception** — images are lazily described by an optional vision model, cached and budgeted per turn.
-- **Guarded group management** — the agent can mute / unmute / kick / set-card, but every action funnels through one guarded entry: per-group switch + real-time admin check (fail-closed) + a 30-day mute clamp.
-- **Isolated plugins** — third-party plugins run as separate child processes (go-plugin) behind a zero-permission intent protocol; they depend only on the [`plumebot-sdk`](https://github.com/plumebot/plumebot-sdk) module, never on host internals.
-- **Ops-friendly** — DDD layering, versioned DB migrations, structured logs with a per-session `trace_id`, and a built-in admin console (config, conversation history, log search).
+| 组件 | 说明 |
+| :------ | :------ |
+| Go 1.21+ | 单二进制，无外部服务依赖（除 NapCat） |
+| [ZeroBot](https://github.com/wdvxdr1123/ZeroBot) | OneBot v11 连接层 |
+| [eino](https://github.com/cloudwego/eino) (CloudWeGo) | AI Agent 引擎，ChatModelAgent + tool calling |
+| modernc.org/sqlite | SQLite 驱动，纯 Go 无 cgo |
+| HashiCorp go-plugin | 插件动态加载（net/rpc 变体，免 protoc） |
+| uber/zap + lumberjack | 结构化日志 |
 
 ## Quick start
 
